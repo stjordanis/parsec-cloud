@@ -7,7 +7,7 @@ from parsec.backend.beacon import BaseBeaconComponent
 from parsec.backend.vlob import (
     BaseVlobComponent,
     VlobError,
-    VlobTrustSeedError,
+    VlobAccessError,
     VlobVersionError,
     VlobNotFoundError,
     VlobAlreadyExistsError,
