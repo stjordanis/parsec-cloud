@@ -5,6 +5,9 @@ from parsec.api.protocole.base import BaseReqSchema, BaseRepSchema, CmdSerialize
 __all__ = ("blockstore_create_serializer", "blockstore_read_serializer")
 
 
+# TODO: should specify beacon ID in order to secure history garbage collection
+
+
 class BlockstoreCreateReqSchema(BaseReqSchema):
     id = fields.UUID(required=True)
     block = fields.Bytes(required=True)
