@@ -12,6 +12,7 @@ import hypothesis
 from pathlib import Path
 
 from parsec.types import BackendAddr, OrganizationID
+from parsec.logging import configure_logging
 from parsec.core import CoreConfig
 from parsec.core.logged_core import logged_core_factory
 from parsec.core.mountpoint import FUSE_AVAILABLE
@@ -54,9 +55,20 @@ def hypothesis_settings(request):
     )
 
 
+conf_init = False
+
+
 def pytest_runtest_setup(item):
-    # Mock and non-UTC timezones are a really bad mix, so keep things simple
-    os.environ.setdefault("TZ", "UTC")
+    # TODO: move this were it is executed once per run (currently once per test)
+    global conf_init
+    if not conf_init:
+        conf_init = True
+
+        # Mock and non-UTC timezones are a really bad mix, so keep things simple
+        os.environ.setdefault("TZ", "UTC")
+
+        # TODO: should configure struclog here to take into account --log-level
+
     if item.get_closest_marker("slow") and not item.config.getoption("--runslow"):
         pytest.skip("need --runslow option to run")
     if item.get_closest_marker("fuse"):

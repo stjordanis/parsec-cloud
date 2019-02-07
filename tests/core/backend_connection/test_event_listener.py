@@ -61,7 +61,7 @@ async def test_subscribe_listen_unsubscribe_beacon(
         organization_id=alice.organization_id,
         author="bob@test",
         beacon_id=beacon_id,
-        index=1,
+        checkpoint=1,
         src_id=src_id,
         src_version=42,
     )
@@ -69,7 +69,7 @@ async def test_subscribe_listen_unsubscribe_beacon(
     with trio.fail_after(1.0):
         await event_bus.spy.wait(
             "backend.beacon.updated",
-            kwargs={"beacon_id": beacon_id, "index": 1, "src_id": src_id, "src_version": 42},
+            kwargs={"beacon_id": beacon_id, "checkpoint": 1, "src_id": src_id, "src_version": 42},
         )
 
     # Unsubscribe event
@@ -87,7 +87,7 @@ async def test_subscribe_listen_unsubscribe_beacon(
             organization_id=alice.organization_id,
             author="bob@test",
             beacon_id=beacon_id,
-            index=1,
+            checkpoint=1,
             src_id=src_id,
             src_version=42,
         )
@@ -164,7 +164,7 @@ async def test_backend_switch_offline(
             organization_id=alice.organization_id,
             author="bob@test",
             beacon_id=beacon_id,
-            index=1,
+            checkpoint=1,
             src_id=src_id,
             src_version=42,
         )
@@ -172,5 +172,10 @@ async def test_backend_switch_offline(
         with trio.fail_after(1.0):
             await spy.wait(
                 "backend.beacon.updated",
-                kwargs={"beacon_id": beacon_id, "index": 1, "src_id": src_id, "src_version": 42},
+                kwargs={
+                    "beacon_id": beacon_id,
+                    "checkpoint": 1,
+                    "src_id": src_id,
+                    "src_version": 42,
+                },
             )

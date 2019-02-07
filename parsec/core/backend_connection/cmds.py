@@ -11,7 +11,9 @@ from parsec.api.protocole import (
     organization_bootstrap_serializer,
     events_subscribe_serializer,
     events_listen_serializer,
-    beacon_read_serializer,
+    beacon_set_rights_serializer,
+    beacon_get_rights_serializer,
+    beacon_poll_serializer,
     message_send_serializer,
     message_get_serializer,
     vlob_group_check_serializer,
@@ -124,13 +126,38 @@ async def events_listen(transport: Transport, wait: bool = True) -> dict:
 # Beacon
 
 
-async def beacon_read(transport: Transport, id: UUID, offset: int) -> List[Tuple[UUID, int]]:
+async def beacon_get_rights(transport: Transport, id: UUID) -> Dict[UserID, Dict]:
+    rep = await _send_cmd(transport, beacon_get_rights_serializer, cmd="beacon_get_rights", id=id)
+    if rep["status"] != "ok":
+        raise BackendCmdsBadResponse(rep)
+    return rep["users"]
+
+
+async def beacon_set_rights(
+    transport: Transport, id: UUID, user: UserID, read_access: bool, write_access: bool
+) -> None:
     rep = await _send_cmd(
-        transport, beacon_read_serializer, cmd="beacon_read", id=id, offset=offset
+        transport,
+        beacon_set_rights_serializer,
+        cmd="beacon_set_rights",
+        id=id,
+        user=user,
+        read_access=read_access,
+        write_access=write_access,
     )
     if rep["status"] != "ok":
         raise BackendCmdsBadResponse(rep)
-    return [(item["src_id"], item["src_version"]) for item in rep["items"]]
+
+
+async def beacon_poll(
+    transport: Transport, id: UUID, last_checkpoint: int
+) -> Tuple[int, Dict[UUID, int]]:
+    rep = await _send_cmd(
+        transport, beacon_poll_serializer, cmd="beacon_poll", id=id, last_checkpoint=last_checkpoint
+    )
+    if rep["status"] != "ok":
+        raise BackendCmdsBadResponse(rep)
+    return (rep["current_checkpoint"], rep["changes"])
 
 
 # Message
@@ -163,46 +190,24 @@ async def vlob_group_check(transport: Transport, to_check: list) -> list:
     return rep["changed"]
 
 
-async def vlob_create(
-    transport: Transport, id: UUID, rts: str, wts: str, blob: bytes, notify_beacon=UUID
-) -> None:
+async def vlob_create(transport: Transport, beacon: UUID, id: UUID, blob: bytes) -> None:
     rep = await _send_cmd(
-        transport,
-        vlob_create_serializer,
-        cmd="vlob_create",
-        id=id,
-        rts=rts,
-        wts=wts,
-        blob=blob,
-        notify_beacon=notify_beacon,
+        transport, vlob_create_serializer, cmd="vlob_create", beacon=beacon, id=id, blob=blob
     )
     if rep["status"] != "ok":
         raise BackendCmdsBadResponse(rep)
 
 
-async def vlob_read(
-    transport: Transport, id: UUID, rts: str, version: int = None
-) -> Tuple[int, bytes]:
-    rep = await _send_cmd(
-        transport, vlob_read_serializer, cmd="vlob_read", id=id, rts=rts, version=version
-    )
+async def vlob_read(transport: Transport, id: UUID, version: int = None) -> Tuple[int, bytes]:
+    rep = await _send_cmd(transport, vlob_read_serializer, cmd="vlob_read", id=id, version=version)
     if rep["status"] != "ok":
         raise BackendCmdsBadResponse(rep)
     return rep["version"], rep["blob"]
 
 
-async def vlob_update(
-    transport: Transport, id: UUID, wts: str, version: int, blob: bytes, notify_beacon: UUID
-) -> None:
+async def vlob_update(transport: Transport, id: UUID, version: int, blob: bytes) -> None:
     rep = await _send_cmd(
-        transport,
-        vlob_update_serializer,
-        cmd="vlob_update",
-        id=id,
-        version=version,
-        wts=wts,
-        blob=blob,
-        notify_beacon=notify_beacon,
+        transport, vlob_update_serializer, cmd="vlob_update", id=id, version=version, blob=blob
     )
     if rep["status"] != "ok":
         raise BackendCmdsBadResponse(rep)

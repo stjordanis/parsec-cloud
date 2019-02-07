@@ -28,12 +28,22 @@ async def test_beacon_notif_on_new_entry_sync(type, running_backend, alice_core,
                 [
                     (
                         "backend.beacon.updated",
-                        {"beacon_id": beacon_id, "index": 2, "src_id": entry_id, "src_version": 1},
+                        {
+                            "beacon_id": beacon_id,
+                            "checkpoint": 2,
+                            "src_id": entry_id,
+                            "src_version": 1,
+                        },
                     ),
                     ("fs.entry.updated", {"id": entry_id}),
                     (
                         "backend.beacon.updated",
-                        {"beacon_id": beacon_id, "index": 3, "src_id": beacon_id, "src_version": 2},
+                        {
+                            "beacon_id": beacon_id,
+                            "checkpoint": 3,
+                            "src_id": beacon_id,
+                            "src_version": 2,
+                        },
                     ),
                     ("fs.entry.updated", {"id": beacon_id}),
                 ]
@@ -57,7 +67,12 @@ async def test_beacon_notif_on_new_workspace_sync(running_backend, alice_core, a
                 [
                     (
                         "backend.beacon.updated",
-                        {"beacon_id": root_id, "index": 1, "src_id": root_id, "src_version": 2},
+                        {
+                            "beacon_id": root_id,
+                            "checkpoint": 2,
+                            "src_id": root_id,
+                            "src_version": 2,
+                        },
                     ),
                     ("fs.entry.updated", {"id": root_id}),
                 ]
@@ -93,14 +108,19 @@ async def test_beacon_notif_on_new_nested_entry_sync(type, running_backend, alic
                 [
                     (
                         "backend.beacon.updated",
-                        {"beacon_id": beacon_id, "index": 1, "src_id": entry_id, "src_version": 1},
+                        {
+                            "beacon_id": beacon_id,
+                            "checkpoint": 1,
+                            "src_id": entry_id,
+                            "src_version": 1,
+                        },
                     ),
                     ("fs.entry.updated", {"id": entry_id}),
                     (
                         "backend.beacon.updated",
                         {
                             "beacon_id": beacon_id,
-                            "index": 2,
+                            "checkpoint": 2,
                             "src_id": workspace_id,
                             "src_version": 2,
                         },
