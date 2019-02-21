@@ -50,6 +50,15 @@ class BlockAccess:
             digest=sha256(block).hexdigest(),
         )
 
+    def copy(self) -> "BlockAccess":
+        return type(self)(
+            id=uuid4(),
+            key=generate_secret_key(),
+            offset=self.offset,
+            size=self.size,
+            digest=self.digest,
+        )
+
 
 class BlockAccessSchema(UnknownCheckedSchema):
     id = fields.UUID(required=True)

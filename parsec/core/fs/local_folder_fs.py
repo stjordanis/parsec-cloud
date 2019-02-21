@@ -552,7 +552,12 @@ class LocalFolderFS:
                     if is_folderish_manifest(existing_entry_manifest):
                         raise IsADirectoryError(21, "Is a directory", str(dst))
 
-            moved_access = self._recursive_manifest_copy(src_access, src_manifest)
+            _, src_workspace, *_ = src.parts
+            _, dst_workspace, *_ = dst.parts
+            copy_blocks = src_workspace != dst_workspace
+            moved_access = self._recursive_manifest_copy(
+                src_access, src_manifest, copy_blocks=copy_blocks
+            )
 
             # Update destination
             parent_dst_manifest = parent_dst_manifest.evolve_children_and_mark_updated(
@@ -568,7 +573,7 @@ class LocalFolderFS:
             self.set_manifest(parent_src_access, parent_src_manifest)
             self.event_bus.send("fs.entry.updated", id=parent_src_access.id)
 
-    def _recursive_manifest_copy(self, access, manifest):
+    def _recursive_manifest_copy(self, access, manifest, copy_blocks=False):
 
         # First, make sure all the manifest have to copy are locally present
         # (otherwise we will have to stop while part of the manifest are
@@ -609,11 +614,23 @@ class LocalFolderFS:
 
             cpy_access = ManifestAccess()
             if is_file_manifest(manifest):
+
+                if not copy_blocks:
+                    blocks = manifest.blocks
+                    dirty_blocks = manifest.dirty_blocks
+                else:
+                    blocks = []
+                    source_blocks = manifest.blocks + manifest.dirty_blocks
+                    dirty_blocks = [block.copy() for block in source_blocks]
+                    for source, dirty in zip(source_blocks, dirty_blocks):
+                        raw_data = self._local_db.get(source)
+                        self._local_db.set(dirty, raw_data, False)
+
                 cpy_manifest = LocalFileManifest(
                     author=self.local_author,
                     size=manifest.size,
-                    blocks=manifest.blocks,
-                    dirty_blocks=manifest.dirty_blocks,
+                    blocks=blocks,
+                    dirty_blocks=dirty_blocks,
                 )
 
             else:
