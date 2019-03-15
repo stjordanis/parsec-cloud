@@ -287,3 +287,22 @@ class WinFSPOperations(BaseFileSystemOperations):
     def cleanup(self, file_context, file_name, flags) -> None:
         # FspCleanupDelete
         file_context.deleted = flags & 1
+
+    def get_dir_info_by_name(self, file_context, file_name: str) -> dict:
+        with open("C:\\Users\\gbleu\\source\\repos\\parsec-cloud\\turbopocav.txt", "a") as fd:
+            fd.write(f"get_dir_info_by_name {file_context}, {file_name}")
+        with translate_error():
+            stat = self.fs_access.stat(file_context.path)
+        return stat_to_winfsp_attributes(stat)
+
+    def set_delete(self, file_context, file_name: str, delete_file: bool):
+        with open("C:\\Users\\gbleu\\source\\repos\\parsec-cloud\\turbopocav.txt", "a") as fd:
+            fd.write(f"set_delete {file_context}, {file_name}, {delete_file}")
+        with translate_error():
+            stat = self.fs_access.stat(file_context.path)
+            if stat["type"] not in ("folder", "file"):
+                # Cannot remove root mountpoint !
+                raise NTStatusError(NTSTATUS.STATUS_RESOURCEMANAGER_READ_ONLY)
+            if stat["children"]:
+                raise NTStatusError(NTSTATUS.STATUS_DIRECTORY_NOT_EMPTY)
+            file_context.deleted = delete_file
