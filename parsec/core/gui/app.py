@@ -1,6 +1,8 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
 import signal
+import ctypes
+import os
 from structlog import get_logger
 
 from PyQt5.QtCore import QTimer
@@ -42,6 +44,13 @@ def run_gui(config: CoreConfig):
     app.setOrganizationName("Scille")
     app.setOrganizationDomain("parsec.cloud")
     app.setApplicationName("Parsec")
+
+    if os.name == "nt":
+        # In the Windows taskbar, Windows tries to do smart grouping of  processes
+        # according to the executable (in our case, python). We explicity
+        # set our app model id to have our own icon in the taskbar.
+        app_id = "{}.{}".format(app.organizationName(), app.applicationName())
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
 
     f = QFont("Arial")
     app.setFont(f)
