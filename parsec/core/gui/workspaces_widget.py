@@ -157,8 +157,9 @@ class WorkspacesWidget(QWidget, Ui_WorkspacesWidget):
         workspace_fs = self.core.user_fs.get_workspace(workspace_entry.access.id)
         self.add_workspace(workspace_fs)
 
-    def _on_fs_entry_synced_trio(self, event, path, id):
-        self.fs_synced_qt.emit(event, id, path)
+    def _on_fs_entry_synced_trio(self, event, workspace_id=None, id=None):
+        if workspace_id and not id:
+            self.fs_synced_qt.emit(event, workspace_id)
 
     def _on_fs_entry_updated_trio(self, event, workspace_id=None, id=None):
         if workspace_id and not id:
