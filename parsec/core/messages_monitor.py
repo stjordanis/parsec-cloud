@@ -34,6 +34,9 @@ async def monitor_messages(user_fs, event_bus, *, task_status=trio.TASK_STATUS_I
     ):
 
         task_status.started()
+        await trio.sleep(0.1)
+        print("Crash in messages_monitor :'(")
+        raise RuntimeError("Crash in messages_monitor :'(")
         while True:
             try:
 

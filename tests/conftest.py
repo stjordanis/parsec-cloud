@@ -46,6 +46,7 @@ from tests.oracles import oracle_fs_factory, oracle_fs_with_sync_factory  # noqa
 def pytest_addoption(parser):
     parser.addoption("--hypothesis-max-examples", default=100, type=int)
     parser.addoption("--hypothesis-derandomize", action="store_true")
+    parser.addoption("--detect-pytest-trio-issue-75", action="store_true")
     parser.addoption(
         "--postgresql",
         action="store_true",
@@ -77,7 +78,8 @@ def is_xdist_master(config):
 
 def pytest_configure(config):
     # Patch pytest-trio
-    patch_pytest_trio()
+    if config.getoption("--detect-pytest-trio-issue-75"):
+        patch_pytest_trio()
     # Mock and non-UTC timezones are a really bad mix, so keep things simple
     os.environ.setdefault("TZ", "UTC")
     # For some reason, Windows doesn't like our logging configuration and

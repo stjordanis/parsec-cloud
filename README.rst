@@ -1,36 +1,23 @@
-===============================
-ParSec
-===============================
+Showcase Pytest-trio issue #75
 
-.. image:: https://travis-ci.org/Scille/parsec-cloud.svg?branch=master
-    :target: https://travis-ci.org/Scille/parsec-cloud
-    :alt: Travis CI Status
+see
+- https://github.com/python-trio/pytest-trio/pull/75
+- https://github.com/python-trio/pytest-trio/pull/77
 
-.. image:: https://ci.appveyor.com/api/projects/status/8v0bdvoc7vc2dc9l/branch/master?svg=true
-    :target: https://ci.appveyor.com/project/touilleMan/parsec-cloud/branch/master
-    :alt: Appveyor CI Status
+.. code-block:: shell
 
-.. image:: https://codecov.io/gh/Scille/parsec-cloud/branch/master/graph/badge.svg
-    :target: https://codecov.io/gh/Scille/parsec-cloud
-    :alt: Code coverage
-
-.. image:: https://pyup.io/repos/github/Scille/parsec-cloud/shield.svg
-    :target: https://pyup.io/repos/github/Scille/parsec-cloud/
-    :alt: Updates
-
-.. image:: https://img.shields.io/pypi/v/parsec-cloud.svg
-    :target: https://pypi.python.org/pypi/parsec-cloud
-    :alt: Pypi Status
-
-.. image:: https://readthedocs.org/projects/parsec-cloud/badge/?version=latest
-    :target: http://parsec-cloud.readthedocs.io/en/latest/?badge=latest
-    :alt: Documentation Status
-
-.. image:: https://img.shields.io/badge/code%20style-black-000000.svg
-    :target: https://github.com/ambv/black
-    :alt: Code style: black
-
-Secure cloud framework
-
-* Free software: AGPL v3
-* Documentation: https://parsec-cloud.readthedocs.org.
+    $ pip install -e .[all]
+    [...]
+    $ py.test tests/test_showcase_pytest_trio_issue_75.py -s
+    [...]
+    tests/test_showcase_pytest_trio_issue_75.py Test started...
+    Crash in messages_monitor :(
+    .
+    [...]
+    ======= 1 passed in 0.25 seconds =======
+    $ py.test tests/test_showcase_pytest_trio_issue_75.py -s --detect-pytest-trio-issue-75
+    tests/test_showcase_pytest_trio_issue_75.py Test started...
+    Crash in messages_monitor :(
+    F
+    [...]
+    ======= 1 failed in 0.33 seconds =======
