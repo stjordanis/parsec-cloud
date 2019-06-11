@@ -191,26 +191,37 @@ async def test_idempotent_mount(base_mountpoint, alice_user_fs, event_bus, manua
 
     # Now we can start fuse
 
-    async with mountpoint_manager_factory(
-        alice_user_fs, event_bus, base_mountpoint
-    ) as mountpoint_manager:
+    with event_bus.listen() as spy:
 
-        await mountpoint_manager.mount_workspace(wid)
-        assert await bar_txt.exists()
+        async with mountpoint_manager_factory(
+            alice_user_fs, event_bus, base_mountpoint
+        ) as mountpoint_manager:
 
-        with pytest.raises(MountpointAlreadyMounted):
             await mountpoint_manager.mount_workspace(wid)
-        assert await bar_txt.exists()
+            assert await bar_txt.exists()
 
-        await mountpoint_manager.unmount_workspace(wid)
-        assert not await bar_txt.exists()
+            with pytest.raises(MountpointAlreadyMounted):
+                await mountpoint_manager.mount_workspace(wid)
+            assert await bar_txt.exists()
 
-        with pytest.raises(MountpointNotMounted):
             await mountpoint_manager.unmount_workspace(wid)
-        assert not await bar_txt.exists()
+            assert not await bar_txt.exists()
 
-        await mountpoint_manager.mount_workspace(wid)
-        assert await bar_txt.exists()
+            with pytest.raises(MountpointNotMounted):
+                await mountpoint_manager.unmount_workspace(wid)
+            assert not await bar_txt.exists()
+
+            await mountpoint_manager.mount_workspace(wid)
+            assert await bar_txt.exists()
+
+            if manual_unmount:
+                await mountpoint_manager.unmount_workspace(wid)
+                # Mountpoint should be stopped by now
+                spy.assert_events_occured([("mountpoint.stopped", {"mountpoint": mountpoint_path})])
+
+        if not manual_unmount:
+            # Mountpoint should be stopped by now
+            spy.assert_events_occured([("mountpoint.stopped", {"mountpoint": mountpoint_path})])
 
 
 @pytest.mark.trio
