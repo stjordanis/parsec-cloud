@@ -183,11 +183,43 @@ local_folder_manifest_serializer = serializer_factory(LocalFolderManifestSchema)
 
 
 @attr.s(slots=True, frozen=True, auto_attribs=True)
-class LocalWorkspaceManifest(LocalFolderManifest):
+class LocalWorkspaceManifest:
+    author: DeviceID
+    base_version: int = 0
+    need_sync: bool = True
+    is_placeholder: bool = True
+    created: pendulum.Pendulum = None
+    updated: pendulum.Pendulum = None
+    children: Dict[EntryName, EntryID] = attr.ib(converter=FrozenDict, factory=FrozenDict)
+
+    def __attrs_post_init__(self):
+        if not self.created:
+            object.__setattr__(self, "created", pendulum.now())
+        if not self.updated:
+            object.__setattr__(self, "updated", self.created)
+
+    def evolve_and_mark_updated(self, **data) -> "LocalFileManifest":
+        if "updated" not in data:
+            data["updated"] = pendulum.now()
+        data.setdefault("need_sync", True)
+        return attr.evolve(self, **data)
+
+    def evolve(self, **data) -> "LocalFileManifest":
+        return attr.evolve(self, **data)
+
+    def evolve_children_and_mark_updated(self, data) -> "LocalWorkspaceManifest":
+        return self.evolve_and_mark_updated(
+            children={k: v for k, v in {**self.children, **data}.items() if v is not None}
+        )
+
+    def evolve_children(self, data) -> "LocalWorkspaceManifest":
+        return self.evolve(
+            children={k: v for k, v in {**self.children, **data}.items() if v is not None}
+        )
+
     def to_remote(self, **data) -> "remote_manifests.WorkspaceManifest":
         return remote_manifests.WorkspaceManifest(
             author=self.author,
-            parent_id=self.parent_id,
             version=self.base_version,
             created=self.created,
             updated=self.updated,
@@ -196,8 +228,20 @@ class LocalWorkspaceManifest(LocalFolderManifest):
         )
 
 
-class LocalWorkspaceManifestSchema(LocalFolderManifestSchema):
+class LocalWorkspaceManifestSchema(UnknownCheckedSchema):
+    format = fields.CheckedConstant(1, required=True)
     type = fields.CheckedConstant("local_workspace_manifest", required=True)
+    author = fields.DeviceID(required=True)
+    base_version = fields.Integer(required=True, validate=validate.Range(min=0))
+    need_sync = fields.Boolean(required=True)
+    is_placeholder = fields.Boolean(required=True)
+    created = fields.DateTime(required=True)
+    updated = fields.DateTime(required=True)
+    children = fields.Map(
+        EntryNameField(validate=validate.Length(min=1, max=256)),
+        EntryIDField(required=True),
+        required=True,
+    )
 
     @post_load
     def make_obj(self, data):

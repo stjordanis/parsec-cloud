@@ -11,8 +11,10 @@ from parsec.core.types import (
     EntryID,
     EntryName,
     FolderManifest,
+    FileManifest,
     Manifest,
     LocalManifest,
+    LocalFileManifest,
     BlockAccess,
 )
 from parsec.core.fs.buffer_ordering import merge_buffers_with_limits_and_alignment
@@ -330,7 +332,7 @@ class SyncTransactions:
                 return
 
     async def file_conflict(
-        self, entry_id: EntryID, local_manifest: LocalManifest, remote_manifest: Manifest
+        self, entry_id: EntryID, local_manifest: LocalFileManifest, remote_manifest: FileManifest
     ) -> None:
         # This is the only transaction that affects more than one manifests
         # That's because the local version of the file has to be registered in the

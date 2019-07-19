@@ -15,6 +15,7 @@ from parsec.core.types import (
     LocalManifest,
     LocalFileManifest,
     LocalFolderManifest,
+    LocalWorkspaceManifest,
     FileDescriptor,
 )
 
@@ -175,7 +176,7 @@ class EntryTransactions:
 
         # Loop over parts
         parts = []
-        while current_id != self.workspace_id:
+        while not isinstance(current_manifest, LocalWorkspaceManifest):
 
             # Get the manifest
             try:
