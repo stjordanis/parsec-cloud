@@ -4,6 +4,7 @@ import pendulum
 import itertools
 from triopg.exceptions import UniqueViolationError
 from typing import Tuple, List, Optional
+from pypika import PostgreSQLQuery as Query, Parameter
 
 from parsec.types import UserID, DeviceID, OrganizationID
 from parsec.event_bus import EventBus
@@ -19,6 +20,41 @@ from parsec.backend.user import (
     UserNotFoundError,
 )
 from parsec.backend.drivers.postgresql.handler import send_signal, PGHandler
+from parsec.backend.drivers.postgresql.tables import (
+    t_user,
+    t_device,
+    q_user_internal_id,
+    q_device_internal_id,
+    q_organization_internal_id,
+)
+
+
+_q_insert_user = (
+    Query.into(t_user)
+    .columns(
+        "organization", "user_id", "is_admin", "user_certificate", "user_certifier", "created_on"
+    )
+    .insert(
+        q_organization_internal_id(Parameter("$1")),
+        Parameter("$2"),
+        Parameter("$3"),
+        Parameter("$4"),
+        q_device_internal_id(organization_id=Parameter("$1"), device_id=Parameter("$5")),
+        Parameter("$6"),
+    )
+    .get_sql()
+)
+
+
+_q_get_user_devices = (
+    Query.from_(t_device)
+    .select(t_device.device_id)
+    .where(
+        t_device.user_
+        == q_user_internal_id(organization_id=Parameter("$1"), user_id=Parameter("$2"))
+    )
+    .get_sql()
+)
 
 
 class PGUserComponent(BaseUserComponent):
@@ -29,37 +65,22 @@ class PGUserComponent(BaseUserComponent):
     async def create_user(
         self, organization_id: OrganizationID, user: User, first_device: Device
     ) -> None:
-        async with self.dbh.pool.acquire() as conn:
-            async with conn.transaction():
-                await self._create_user(conn, organization_id, user, first_device)
-                await send_signal(
-                    conn,
-                    "user.created",
-                    organization_id=organization_id,
-                    user_id=user.user_id,
-                    first_device_id=first_device.device_id,
-                )
+        async with self.dbh.pool.acquire() as conn, conn.transaction():
+            await self._create_user(conn, organization_id, user, first_device)
+            await send_signal(
+                conn,
+                "user.created",
+                organization_id=organization_id,
+                user_id=user.user_id,
+                first_device_id=first_device.device_id,
+            )
 
     async def _create_user(
         self, conn, organization_id: OrganizationID, user: User, first_device: Device
     ) -> None:
         try:
             result = await conn.execute(
-                """
-INSERT INTO user_ (
-    organization,
-    user_id,
-    is_admin,
-    user_certificate,
-    user_certifier,
-    created_on
-)
-SELECT
-    get_organization_internal_id($1),
-    $2, $3, $4,
-    get_device_internal_id($1, $5),
-    $6
-""",
+                _q_insert_user,
                 organization_id,
                 user.user_id,
                 user.is_admin,
@@ -78,28 +99,22 @@ SELECT
     async def create_device(
         self, organization_id: OrganizationID, device: Device, encrypted_answer: bytes = b""
     ) -> None:
-        async with self.dbh.pool.acquire() as conn:
-            async with conn.transaction():
-                await self._create_device(conn, organization_id, device)
-                await send_signal(
-                    conn,
-                    "device.created",
-                    organization_id=organization_id,
-                    device_id=device.device_id,
-                    encrypted_answer=encrypted_answer,
-                )
+        async with self.dbh.pool.acquire() as conn, conn.transaction():
+            await self._create_device(conn, organization_id, device)
+            await send_signal(
+                conn,
+                "device.created",
+                organization_id=organization_id,
+                device_id=device.device_id,
+                encrypted_answer=encrypted_answer,
+            )
 
     async def _create_device(
         self, conn, organization_id: OrganizationID, device: Device, first_device: bool = False
     ) -> None:
         if not first_device:
             existing_devices = await conn.fetch(
-                """
-    SELECT device_id FROM device
-    WHERE user_ = get_user_internal_id($1, $2)
-                """,
-                organization_id,
-                device.user_id,
+                _q_get_user_devices, organization_id, device.user_id
             )
             if not existing_devices:
                 raise UserNotFoundError(f"User `{device.user_id}` doesn't exists")

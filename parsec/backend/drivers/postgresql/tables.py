@@ -12,6 +12,7 @@ def fn_exists(q):
 
 ### Organization ###
 
+
 t_organization = Table("organization")
 
 
@@ -29,6 +30,7 @@ def q_organization_internal_id(organization_id):
 
 
 ### User ###
+
 
 t_user = Table("user_")
 t_device = Table("device")
@@ -82,10 +84,12 @@ def q_device_internal_id(device_id, organization_id=None, organization=None):
 
 ### Message ###
 
+
 t_message = Table("message")
 
 
 ### Realm ###
+
 
 t_realm = Table("realm")
 t_realm_user_role = Table("realm_user_role")
@@ -114,6 +118,7 @@ def q_realm_internal_id(realm_id, organization_id=None, organization=None):
 
 ### Vlob ###
 
+
 t_vlob_encryption_revision = Table("vlob_encryption_revision")
 t_vlob_atom = Table("vlob_atom")
 t_realm_vlob_update = Table("realm_vlob_update")
@@ -140,6 +145,7 @@ def q_user_can_write_vlob(user, realm):
 
 
 ### Block ###
+
 
 t_block = Table("block")
 t_block_data = Table("block_data")

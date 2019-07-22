@@ -33,6 +33,47 @@ from parsec.backend.drivers.postgresql.tables import (
 from parsec.backend.drivers.postgresql.realm import get_realm_status, RealmNotFoundError
 
 
+_q_get_realm_id_from_block_id = (
+    q_block(organization_id=Parameter("$1"), block_id=Parameter("$2"))
+    .select(q_realm(_id=t_block.realm).select("realm_id"))
+    .get_sql()
+)
+
+_q_get_block_meta = (
+    q_block(organization_id=Parameter("$1"), block_id=Parameter("$2"))
+    .select(
+        "deleted_on",
+        q_user_can_read_vlob(
+            user=q_user_internal_id(organization_id=Parameter("$1"), user_id=Parameter("$3")),
+            realm=t_block.realm,
+        ),
+    )
+    .get_sql()
+)
+
+_q_get_block_write_right_and_unicity = Query.select(
+    q_user_can_write_vlob(
+        user=q_user_internal_id(organization_id=Parameter("$1"), user_id=Parameter("$2")),
+        realm=q_realm_internal_id(organization_id=Parameter("$1"), realm_id=Parameter("$3")),
+    ),
+    fn_exists(q_block(organization_id=Parameter("$1"), block_id=Parameter("$4"))),
+).get_sql()
+
+_q_insert_block = (
+    Query.into(t_block)
+    .columns("organization", "block_id", "realm", "author", "size", "created_on")
+    .insert(
+        q_organization_internal_id(Parameter("$1")),
+        Parameter("$2"),
+        q_realm_internal_id(organization_id=Parameter("$1"), realm_id=Parameter("$3")),
+        q_device_internal_id(organization_id=Parameter("$1"), device_id=Parameter("$4")),
+        Parameter("$5"),
+        Parameter("$6"),
+    )
+    .get_sql()
+)
+
+
 async def _check_realm(conn, organization_id, realm_id):
     try:
         rep = await get_realm_status(conn, organization_id, realm_id)
@@ -45,46 +86,6 @@ async def _check_realm(conn, organization_id, realm_id):
 
 
 class PGBlockComponent(BaseBlockComponent):
-    _q_get_realm_id_from_block_id = (
-        q_block(organization_id=Parameter("$1"), block_id=Parameter("$2"))
-        .select(q_realm(_id=t_block.realm).select("realm_id"))
-        .get_sql()
-    )
-
-    _q_get_block_meta = (
-        q_block(organization_id=Parameter("$1"), block_id=Parameter("$2"))
-        .select(
-            "deleted_on",
-            q_user_can_read_vlob(
-                user=q_user_internal_id(organization_id=Parameter("$1"), user_id=Parameter("$3")),
-                realm=t_block.realm,
-            ),
-        )
-        .get_sql()
-    )
-
-    _q_get_block_write_right_and_unicity = Query.select(
-        q_user_can_write_vlob(
-            user=q_user_internal_id(organization_id=Parameter("$1"), user_id=Parameter("$2")),
-            realm=q_realm_internal_id(organization_id=Parameter("$1"), realm_id=Parameter("$3")),
-        ),
-        fn_exists(q_block(organization_id=Parameter("$1"), block_id=Parameter("$4"))),
-    ).get_sql()
-
-    _q_insert_block = (
-        Query.into(t_block)
-        .columns("organization", "block_id", "realm", "author", "size", "created_on")
-        .insert(
-            q_organization_internal_id(Parameter("$1")),
-            Parameter("$2"),
-            q_realm_internal_id(organization_id=Parameter("$1"), realm_id=Parameter("$3")),
-            q_device_internal_id(organization_id=Parameter("$1"), device_id=Parameter("$4")),
-            Parameter("$5"),
-            Parameter("$6"),
-        )
-        .get_sql()
-    )
-
     def __init__(
         self,
         dbh: PGHandler,
@@ -99,15 +100,11 @@ class PGBlockComponent(BaseBlockComponent):
         self, organization_id: OrganizationID, author: DeviceID, block_id: UUID
     ) -> bytes:
         async with self.dbh.pool.acquire() as conn, conn.transaction():
-            realm_id = await conn.fetchval(
-                self._q_get_realm_id_from_block_id, organization_id, block_id
-            )
+            realm_id = await conn.fetchval(_q_get_realm_id_from_block_id, organization_id, block_id)
             if not realm_id:
                 raise BlockNotFoundError(f"Realm `{realm_id}` doesn't exist")
             await _check_realm(conn, organization_id, realm_id)
-            ret = await conn.fetchrow(
-                self._q_get_block_meta, organization_id, block_id, author.user_id
-            )
+            ret = await conn.fetchrow(_q_get_block_meta, organization_id, block_id, author.user_id)
             if not ret or ret[0]:
                 raise BlockNotFoundError()
 
@@ -129,7 +126,7 @@ class PGBlockComponent(BaseBlockComponent):
 
             # 1) Check access rights and block unicity
             ret = await conn.fetchrow(
-                self._q_get_block_write_right_and_unicity,
+                _q_get_block_write_right_and_unicity,
                 organization_id,
                 author.user_id,
                 realm_id,
@@ -155,7 +152,7 @@ class PGBlockComponent(BaseBlockComponent):
 
             # 3) Insert the block metadata into the database
             ret = await conn.execute(
-                self._q_insert_block,
+                _q_insert_block,
                 organization_id,
                 block_id,
                 realm_id,
@@ -168,27 +165,29 @@ class PGBlockComponent(BaseBlockComponent):
                 raise BlockError(f"Insertion error: {ret}")
 
 
+_q_get_block_data = (
+    Query.from_(t_block_data)
+    .select("data")
+    .where(t_block_data.organization_id == Parameter("$1"))
+    .where(t_block_data.block_id == Parameter("$2"))
+).get_sql()
+
+
+_q_insert_block_data = (
+    Query.into(t_block_data)
+    .columns("organization_id", "block_id", "data")
+    .insert(Parameter("$1"), Parameter("$2"), Parameter("$3"))
+    .get_sql()
+)
+
+
 class PGBlockStoreComponent(BaseBlockStoreComponent):
-    _q_get_block_data = (
-        Query.from_(t_block_data)
-        .select("data")
-        .where(t_block_data.organization_id == Parameter("$1"))
-        .where(t_block_data.block_id == Parameter("$2"))
-    ).get_sql()
-
-    _q_insert_block_data = (
-        Query.into(t_block_data)
-        .columns("organization_id", "block_id", "data")
-        .insert(Parameter("$1"), Parameter("$2"), Parameter("$3"))
-        .get_sql()
-    )
-
     def __init__(self, dbh: PGHandler):
         self.dbh = dbh
 
     async def read(self, organization_id: OrganizationID, id: UUID) -> bytes:
         async with self.dbh.pool.acquire() as conn:
-            ret = await conn.fetchrow(self._q_get_block_data, organization_id, id)
+            ret = await conn.fetchrow(_q_get_block_data, organization_id, id)
             if not ret:
                 raise BlockNotFoundError()
 
@@ -197,7 +196,7 @@ class PGBlockStoreComponent(BaseBlockStoreComponent):
     async def create(self, organization_id: OrganizationID, id: UUID, block: bytes) -> None:
         async with self.dbh.pool.acquire() as conn:
             try:
-                ret = await conn.execute(self._q_insert_block_data, organization_id, id, block)
+                ret = await conn.execute(_q_insert_block_data, organization_id, id, block)
                 if ret != "INSERT 0 1":
                     raise BlockError(f"Insertion error: {ret}")
 
