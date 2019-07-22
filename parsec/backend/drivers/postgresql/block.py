@@ -3,7 +3,7 @@
 from triopg.exceptions import UniqueViolationError
 from uuid import UUID
 import pendulum
-from pypika import Query, Parameter
+from pypika import PostgreSQLQuery as Query, Parameter
 
 from parsec.types import DeviceID, OrganizationID
 from parsec.backend.vlob import BaseVlobComponent
