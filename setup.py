@@ -325,6 +325,7 @@ extra_requirements = {
         "zxcvbn==4.4.27",
     ],
     "backend": [
+        "PyPika==0.29.0",
         # PostgreSQL
         "triopg==0.3.0",
         "trio-asyncio==0.10.0",
