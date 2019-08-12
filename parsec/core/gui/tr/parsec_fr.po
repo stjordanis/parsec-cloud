@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2019-07-31 10:42+0200\n"
-"PO-Revision-Date: 2019-07-31 10:43+0200\n"
+"POT-Creation-Date: 2019-08-09 11:30+0200\n"
+"PO-Revision-Date: 2019-08-09 11:31+0200\n"
 "Last-Translator: \n"
 "Language: fr\n"
 "Language-Team: fr <LL@li.org>\n"
@@ -441,6 +441,9 @@ msgstr "Commencer"
 msgid "FILE_MENU_OPEN"
 msgstr "Ouvrir"
 
+msgid "FILE_MENU_HISTORY"
+msgstr "Voir l'historique"
+
 msgid "FILE_MENU_RENAME"
 msgstr "Renommer"
 
@@ -700,6 +703,18 @@ msgstr ""
 msgid "LABEL_SEARCH_DEVICES"
 msgstr "Rechercher des appareils"
 
+msgid "LABEL_CREATED_ON"
+msgstr "Création"
+
+msgid "LABEL_LAST_UPDATED_ON"
+msgstr "Dernière mise à jour"
+
+msgid "BUTTON_CLOSE"
+msgstr "Fermer"
+
+msgid "LABEL_FILE_UPDATED_BY"
+msgstr "par"
+
 msgid "LABEL_SEARCH_FILES"
 msgstr "Rechercher des fichiers ou dossiers"
 
@@ -870,9 +885,6 @@ msgstr ""
 
 msgid "BUTTON_REGISTER_DEVICE"
 msgstr "Enregistrer l'appareil"
-
-msgid "BUTTON_CLOSE"
-msgstr "Fermer"
 
 msgid "TITLE_REGISTER_NEW_USER"
 msgstr "Enregistrer un nouvel utilisateur"

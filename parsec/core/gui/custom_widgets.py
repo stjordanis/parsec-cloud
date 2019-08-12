@@ -2,7 +2,16 @@
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QPoint
 from PyQt5.QtGui import QIcon, QPainter, QColor, QPen, QCursor
-from PyQt5.QtWidgets import QLineEdit, QPushButton, QLabel, QGraphicsDropShadowEffect
+from PyQt5.QtWidgets import (
+    QLineEdit,
+    QPushButton,
+    QLabel,
+    QGraphicsDropShadowEffect,
+    QListWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QStyle,
+)
 
 
 class FileLineEdit(QLineEdit):
@@ -148,3 +157,20 @@ class ShadowedButton(PointingHandButton):
         effect.setXOffset(2)
         effect.setYOffset(2)
         self.setGraphicsEffect(effect)
+
+
+class ListWidget(QListWidget):
+    class ItemDelegate(QStyledItemDelegate):
+        def paint(self, painter, option, index):
+            view_option = QStyleOptionViewItem(option)
+            view_option.decorationAlignment |= Qt.AlignHCenter
+            # Qt tries to be nice and adds a lovely background color
+            # on the focused item. Since we removed item selection,
+            # we don't want that, so we remove the focus
+            if option.state & QStyle.State_HasFocus:
+                view_option.state &= ~QStyle.State_HasFocus
+            super().paint(painter, view_option, index)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setItemDelegate(ListWidget.ItemDelegate())

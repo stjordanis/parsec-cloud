@@ -232,6 +232,42 @@
     </message>
 </context>
 <context>
+    <name>FileHistoryDialog</name>
+    <message>
+        <location filename="../forms/file_history_dialog.ui" line="14"/>
+        <source>Dialog</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../forms/file_history_dialog.ui" line="144"/>
+        <source>LABEL_CREATED_ON</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../forms/file_history_dialog.ui" line="186"/>
+        <source>LABEL_LAST_UPDATED_ON</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../forms/file_history_dialog.ui" line="274"/>
+        <source>BUTTON_CLOSE</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FileHistoryWidget</name>
+    <message>
+        <location filename="../forms/file_history_widget.ui" line="32"/>
+        <source>Form</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../forms/file_history_widget.ui" line="82"/>
+        <source>LABEL_FILE_UPDATED_BY</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>FilesWidget</name>
     <message>
         <location filename="../forms/files_widget.ui" line="20"/>
@@ -239,27 +275,27 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/files_widget.ui" line="281"/>
+        <location filename="../forms/files_widget.ui" line="207"/>
         <source>LABEL_SEARCH_FILES</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/files_widget.ui" line="381"/>
+        <location filename="../forms/files_widget.ui" line="307"/>
         <source>LABEL_FILE_NAME</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/files_widget.ui" line="386"/>
+        <location filename="../forms/files_widget.ui" line="312"/>
         <source>LABEL_FILE_CREATED</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/files_widget.ui" line="391"/>
+        <location filename="../forms/files_widget.ui" line="317"/>
         <source>LABEL_FILE_UPDATED</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/files_widget.ui" line="396"/>
+        <location filename="../forms/files_widget.ui" line="322"/>
         <source>LABEL_FILE_SIZE</source>
         <translation type="unfinished"></translation>
     </message>
@@ -345,7 +381,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/input_dialog.ui" line="255"/>
+        <location filename="../forms/input_dialog.ui" line="254"/>
         <source>BUTTON_OK</source>
         <translation type="unfinished"></translation>
     </message>
@@ -358,12 +394,12 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/loading_dialog.ui" line="62"/>
+        <location filename="../forms/loading_dialog.ui" line="68"/>
         <source>LABEL_IMPORTING</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/loading_dialog.ui" line="150"/>
+        <location filename="../forms/loading_dialog.ui" line="156"/>
         <source>BUTTON_CANCEL</source>
         <translation type="unfinished"></translation>
     </message>
@@ -419,27 +455,27 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/login_widget.ui" line="314"/>
+        <location filename="../forms/login_widget.ui" line="317"/>
         <source>BUTTON_REGISTER_NEW_USER</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/login_widget.ui" line="336"/>
+        <location filename="../forms/login_widget.ui" line="342"/>
         <source>BUTTON_REGISTER_NEW_DEVICE</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/login_widget.ui" line="358"/>
+        <location filename="../forms/login_widget.ui" line="367"/>
         <source>BUTTON_LOG_IN</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/login_widget.ui" line="377"/>
+        <location filename="../forms/login_widget.ui" line="389"/>
         <source>BUTTON_BOOTSTRAP_ORG</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/login_widget.ui" line="393"/>
+        <location filename="../forms/login_widget.ui" line="408"/>
         <source>BUTTON_SETTINGS</source>
         <translation type="unfinished"></translation>
     </message>
@@ -498,12 +534,12 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/message_dialog.ui" line="278"/>
+        <location filename="../forms/message_dialog.ui" line="283"/>
         <source>BUTTON_DETAILS</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/message_dialog.ui" line="307"/>
+        <location filename="../forms/message_dialog.ui" line="312"/>
         <source>BUTTON_COPY_TO_CLIPBOARD</source>
         <translation type="unfinished"></translation>
     </message>
@@ -627,22 +663,22 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/new_version_dialog.ui" line="91"/>
+        <location filename="../forms/new_version_dialog.ui" line="97"/>
         <source>LABEL_NEW_VERSION_AVAILABLE</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/new_version_dialog.ui" line="133"/>
+        <location filename="../forms/new_version_dialog.ui" line="139"/>
         <source>BUTTON_DOWNLOAD</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/new_version_dialog.ui" line="182"/>
+        <location filename="../forms/new_version_dialog.ui" line="188"/>
         <source>CHECK_NO_REMINDER</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/new_version_dialog.ui" line="206"/>
+        <location filename="../forms/new_version_dialog.ui" line="212"/>
         <source>BUTTON_IGNORE</source>
         <translation type="unfinished"></translation>
     </message>
@@ -676,12 +712,12 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/question_dialog.ui" line="295"/>
+        <location filename="../forms/question_dialog.ui" line="300"/>
         <source>BUTTON_NO</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/question_dialog.ui" line="327"/>
+        <location filename="../forms/question_dialog.ui" line="332"/>
         <source>BUTTON_YES</source>
         <translation type="unfinished"></translation>
     </message>
@@ -805,17 +841,17 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/replace_dialog.ui" line="228"/>
+        <location filename="../forms/replace_dialog.ui" line="234"/>
         <source>BUTTON_SKIP</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/replace_dialog.ui" line="249"/>
+        <location filename="../forms/replace_dialog.ui" line="255"/>
         <source>BUTTON_REPLACE</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../forms/replace_dialog.ui" line="279"/>
+        <location filename="../forms/replace_dialog.ui" line="285"/>
         <source>CHECK_DO_THE_SAME</source>
         <translation type="unfinished"></translation>
     </message>

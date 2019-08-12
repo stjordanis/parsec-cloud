@@ -209,11 +209,15 @@ class FilesWidget(QWidget, Ui_FilesWidget):
         import datetime
 
         files = self.table_files.selected_files()
-        if len(files) > 1:
-            show_warning(self, _("Can only see the history one file at a time."))
+        if len(files) == 0:
             return
+        selected_file = self.table_files.selected_files()[0]
         fd = FileHistoryDialog(
-            "Osef.txt", datetime.datetime.utcnow(), datetime.datetime.utcnow(), [1, 2, 3, 4, 5, 6]
+            selected_file.name,
+            datetime.datetime.utcnow(),
+            datetime.datetime.utcnow(),
+            [1, 2, 3, 4, 5, 6],
+            parent=self,
         )
         fd.exec_()
 
