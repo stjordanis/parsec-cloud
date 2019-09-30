@@ -181,3 +181,32 @@ def add_nav_link(mountpoint):
         _add_nav_link(mountpoint)
     except OSError as exc:
         logger.error("Error while adding navbar registry values: {}".format(str(exc)))
+
+
+def _add_windows_parsec_protocol():
+    try:
+        import winreg
+    except ImportError:
+        logger.warning("OS is Windows but cannot import winreg")
+        return
+    handle = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+
+    exe_path = os.path.join(os.getcwd(), "parsec.exe")
+    with winreg.OpenKey(handle, PARSEC_INSTALL_PATH, access=winreg.KEY_READ) as install_handle:
+        val = winreg.QueryValueEx(install_handle, None)
+        if val:
+            exe_path = os.path.join(val[0], "parsec.exe")
+
+    handle = winreg.ConnectRegister(None, winreg.HKEY_CLASSES_ROOT)
+    app_handle = winreg.CreateKey(handle, "parsec")
+    winreg.SetValueEx(app_handle, None, 0, winreg.REG_SZ, "URL:parsec protocol")
+    winreg.SetValueEx(app_handle, "URL Protocol", 0, winreg.REG_SZ, None)
+    with winreg.CreateKey(app_handle, "Shell") as shell_handle:
+        with winreg.CreateKey(shell_handle, "Open") as open_handle:
+            with winreg.CreateKey(open_handle, "Command") as command_handle:
+                winreg.SetValueEx(command_handle, None, 0, winreg.REG_SZ, f'"{exe_path}" -- "%1"')
+
+
+def add_parsec_protocol():
+    if platform.system() == "Windows":
+        return
