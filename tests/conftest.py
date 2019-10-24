@@ -709,3 +709,86 @@ def freeze_time(monkeypatch):
             yield time
 
     return _freeze_time
+
+
+@pytest.fixture
+def new_freeze_time(monkeypatch):
+    """New implementation for freeze_time fixture
+
+    Usage::
+
+        def test_new_freeze_time(new_freeze_time):
+
+            # Freeze on day 1
+            with new_freeze_time(1) as f1:
+                t1 = pendulum.now()
+                t2 = pendulum.now()
+
+            # Strict comparisons between timestamps
+            assert t1 < t2
+
+            # Loose comparison with the frozen reference
+            assert t1 == f1
+            assert t2 == f1
+
+            # Comparison goes both ways
+            assert f1 == t1
+            assert f1 == t2
+
+            # Reference can be recreated
+            assert f1 == new_freeze_time(1)
+            assert t1 == new_freeze_time("2000-1-1")
+            assert t2 == new_freeze_time(pendulum.create(2000, 1, 1))
+
+            # Freeze again with days incremented
+            with new_freeze_time(2) as f2:
+                t3 = pendulum.now()
+                t4 = pendulum.now()
+
+            # Causality is still respected
+            assert t1 < t2 < t3 < t4
+            assert f1 < f2 < new_freeze_time(3)
+
+    """
+
+    class FrozenPendulum(pendulum.Pendulum):
+        def __enter__(self):
+            pendulum.set_test_now(pendulum.instance(self))
+            return self
+
+        def __exit__(self, *args):
+            pendulum.set_test_now()
+
+    original_get_datetime = pendulum.Pendulum._get_datetime
+    original_get_test_now = pendulum.Pendulum.get_test_now
+
+    def _get_datetime(self, value, pendulum=False):
+        # Loose comparison if a frozen pendulum is involved
+        if isinstance(value, FrozenPendulum) or isinstance(self, FrozenPendulum):
+            value = value.replace(microsecond=self.microsecond)
+        return original_get_datetime(self, value, pendulum=pendulum)
+
+    def get_test_now():
+        result = original_get_test_now()
+        if result is not None:
+            incremented = result.add(microseconds=1)
+            if incremented.microsecond == 0:
+                raise RuntimeError(
+                    "Pendulum.now() has been called a million times while time is frozen"
+                )
+            pendulum.Pendulum.set_test_now(incremented)
+        return result
+
+    monkeypatch.setattr(pendulum.Pendulum, "_get_datetime", _get_datetime)
+    monkeypatch.setattr(pendulum.Pendulum, "get_test_now", get_test_now)
+
+    def _freeze_time(time):
+        if isinstance(time, int):
+            return FrozenPendulum.create(2000, 1, 1).add(days=time - 1)
+        if isinstance(time, str):
+            return FrozenPendulum.parse(time)
+        if isinstance(time, pendulum.Pendulum):
+            return FrozenPendulum.instance(time)
+        raise TypeError
+
+    return _freeze_time
