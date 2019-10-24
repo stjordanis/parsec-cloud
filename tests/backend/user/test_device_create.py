@@ -7,8 +7,6 @@ from parsec.api.data import DeviceCertificateContent
 from parsec.backend.user import INVITATION_VALIDITY
 from parsec.api.protocol import packb, device_create_serializer, ping_serializer
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 def alice_nd(local_device_factory, alice):
@@ -112,7 +110,7 @@ async def test_device_create_not_own_user(bob_backend_sock, bob, alice_nd):
 
 
 @pytest.mark.trio
-async def test_device_create_certify_too_old(alice_backend_sock, alice, alice_nd):
+async def test_device_create_certify_too_old(alice_backend_sock, alice, alice_nd, freeze_time):
     now = pendulum.Pendulum(2000, 1, 1)
     device_certificate = DeviceCertificateContent(
         author=alice.device_id,

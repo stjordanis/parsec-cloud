@@ -11,8 +11,6 @@ from parsec.api.protocol import (
     device_claim_serializer,
 )
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 async def alice_nd_invitation(backend, alice):
@@ -41,7 +39,7 @@ async def device_claim_cancelled_invitation(sock, **kwargs):
 
 @pytest.mark.trio
 async def test_device_cancel_invitation_ok(
-    alice_backend_sock, alice_nd_invitation, anonymous_backend_sock
+    alice_backend_sock, alice_nd_invitation, anonymous_backend_sock, freeze_time
 ):
     rep = await device_cancel_invitation(
         alice_backend_sock, invited_device_name=alice_nd_invitation.device_id.device_name

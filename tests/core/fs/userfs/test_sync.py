@@ -14,8 +14,6 @@ from parsec.core.types import (
 )
 from parsec.core.fs import FSWorkspaceNotFoundError, FSBackendOfflineError
 
-from tests.common import freeze_time
-
 
 @pytest.mark.trio
 async def test_get_manifest(alice_user_fs):
@@ -26,7 +24,7 @@ async def test_get_manifest(alice_user_fs):
 
 
 @pytest.mark.trio
-async def test_create_workspace(initial_user_manifest_state, alice_user_fs, alice):
+async def test_create_workspace(initial_user_manifest_state, alice_user_fs, alice, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w1")
     um = alice_user_fs.get_user_manifest()
@@ -59,14 +57,14 @@ async def test_create_workspace(initial_user_manifest_state, alice_user_fs, alic
 
 @pytest.mark.trio
 async def test_create_workspace_offline(
-    initial_user_manifest_state, alice_user_fs, alice, running_backend
+    initial_user_manifest_state, alice_user_fs, alice, running_backend, freeze_time
 ):
     with running_backend.offline():
-        await test_create_workspace(initial_user_manifest_state, alice_user_fs, alice)
+        await test_create_workspace(initial_user_manifest_state, alice_user_fs, alice, freeze_time)
 
 
 @pytest.mark.trio
-async def test_rename_workspace(initial_user_manifest_state, alice_user_fs, alice):
+async def test_rename_workspace(initial_user_manifest_state, alice_user_fs, alice, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w1")
 
@@ -97,10 +95,10 @@ async def test_rename_workspace(initial_user_manifest_state, alice_user_fs, alic
 
 @pytest.mark.trio
 async def test_rename_workspace_offline(
-    initial_user_manifest_state, alice_user_fs, alice, running_backend
+    initial_user_manifest_state, alice_user_fs, alice, running_backend, freeze_time
 ):
     with running_backend.offline():
-        await test_rename_workspace(initial_user_manifest_state, alice_user_fs, alice)
+        await test_rename_workspace(initial_user_manifest_state, alice_user_fs, alice, freeze_time)
 
 
 @pytest.mark.trio
@@ -111,7 +109,7 @@ async def test_rename_unknown_workspace(alice_user_fs):
 
 
 @pytest.mark.trio
-async def test_create_workspace_same_name(alice_user_fs):
+async def test_create_workspace_same_name(alice_user_fs, freeze_time):
     with freeze_time("2000-01-02"):
         w1id = await alice_user_fs.workspace_create("w")
 
@@ -125,7 +123,7 @@ async def test_create_workspace_same_name(alice_user_fs):
 
 
 @pytest.mark.trio
-async def test_sync_offline(alice_user_fs, alice):
+async def test_sync_offline(alice_user_fs, alice, freeze_time):
     with freeze_time("2000-01-02"):
         await alice_user_fs.workspace_create("w1")
 
@@ -134,7 +132,7 @@ async def test_sync_offline(alice_user_fs, alice):
 
 
 @pytest.mark.trio
-async def test_sync(running_backend, alice2_user_fs, alice2):
+async def test_sync(running_backend, alice2_user_fs, alice2, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await alice2_user_fs.workspace_create("w1")
 
@@ -168,7 +166,7 @@ async def test_sync(running_backend, alice2_user_fs, alice2):
 
 @pytest.mark.trio
 async def test_sync_under_concurrency(
-    running_backend, alice_user_fs, alice2_user_fs, alice, alice2
+    running_backend, alice_user_fs, alice2_user_fs, alice, alice2, freeze_time
 ):
     with freeze_time("2000-01-02"):
         waid = await alice_user_fs.workspace_create("wa")
@@ -224,7 +222,7 @@ async def test_sync_under_concurrency(
 
 @pytest.mark.trio
 async def test_modify_user_manifest_placeholder(
-    running_backend, backend_data_binder, local_device_factory, user_fs_factory
+    running_backend, backend_data_binder, local_device_factory, user_fs_factory, freeze_time
 ):
     device = local_device_factory()
     await backend_data_binder.bind_device(device, initial_user_manifest_in_v0=True)
@@ -260,7 +258,12 @@ async def test_modify_user_manifest_placeholder(
 @pytest.mark.trio
 @pytest.mark.parametrize("with_workspace", (False, True))
 async def test_sync_placeholder(
-    running_backend, backend_data_binder, local_device_factory, user_fs_factory, with_workspace
+    running_backend,
+    backend_data_binder,
+    local_device_factory,
+    user_fs_factory,
+    with_workspace,
+    freeze_time,
 ):
     device = local_device_factory()
     await backend_data_binder.bind_device(device, initial_user_manifest_in_v0=True)
@@ -322,7 +325,12 @@ async def test_sync_placeholder(
 @pytest.mark.trio
 @pytest.mark.parametrize("dev2_has_changes", (False, True))
 async def test_concurrent_sync_placeholder(
-    running_backend, backend_data_binder, local_device_factory, user_fs_factory, dev2_has_changes
+    running_backend,
+    backend_data_binder,
+    local_device_factory,
+    user_fs_factory,
+    dev2_has_changes,
+    freeze_time,
 ):
     device1 = local_device_factory("a@1")
     await backend_data_binder.bind_device(device1, initial_user_manifest_in_v0=True)
@@ -430,7 +438,9 @@ async def test_sync_not_needed(running_backend, alice_user_fs, alice2_user_fs, a
 
 
 @pytest.mark.trio
-async def test_sync_remote_changes(running_backend, alice_user_fs, alice2_user_fs, alice, alice2):
+async def test_sync_remote_changes(
+    running_backend, alice_user_fs, alice2_user_fs, alice, alice2, freeze_time
+):
     # Alice 2 update the user manifest
     with freeze_time("2000-01-02"):
         wid = await alice2_user_fs.workspace_create("wa")

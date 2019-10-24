@@ -7,8 +7,6 @@ import trio
 from parsec.backend.user import UserInvitation
 from parsec.api.protocol import user_cancel_invitation_serializer, user_claim_serializer
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 async def mallory_invitation(backend, alice, mallory):
@@ -35,7 +33,7 @@ async def user_claim_cancelled_invitation(sock, **kwargs):
 
 @pytest.mark.trio
 async def test_user_cancel_invitation_ok(
-    alice_backend_sock, mallory_invitation, anonymous_backend_sock
+    alice_backend_sock, mallory_invitation, anonymous_backend_sock, freeze_time
 ):
     rep = await user_cancel_invitation(alice_backend_sock, user_id=mallory_invitation.user_id)
     assert rep == {"status": "ok"}

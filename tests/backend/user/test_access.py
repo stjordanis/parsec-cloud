@@ -5,8 +5,6 @@ from pendulum import Pendulum
 
 from parsec.api.protocol import packb, user_get_serializer, user_find_serializer
 
-from tests.common import freeze_time
-
 
 async def user_get(sock, user_id):
     await sock.send(user_get_serializer.req_dumps({"cmd": "user_get", "user_id": user_id}))
@@ -27,6 +25,7 @@ async def access_testbed(
     backend_sock_factory,
     organization_factory,
     local_device_factory,
+    freeze_time,
 ):
     async with backend_factory(populated=False) as backend:
         binder = backend_data_binder_factory(backend)
@@ -55,7 +54,7 @@ async def test_api_user_get_ok(access_testbed):
 
 @pytest.mark.trio
 async def test_api_user_get_ok_deep_trustchain(
-    access_testbed, organization_factory, local_device_factory
+    access_testbed, organization_factory, local_device_factory, freeze_time
 ):
     binder, org, godfrey1, sock = access_testbed
     certificates_store = binder.certificates_store

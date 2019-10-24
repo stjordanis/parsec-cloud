@@ -14,9 +14,6 @@ from parsec.core.fs.workspacefs.file_operations import (
     prepare_reshape,
 )
 
-from tests.common import freeze_time
-
-
 MAX_SIZE = 64
 size = strategies.integers(min_value=0, max_value=MAX_SIZE)
 
@@ -98,7 +95,7 @@ class Storage(dict):
         return manifest
 
 
-def test_complete_scenario():
+def test_complete_scenario(freeze_time):
     storage = Storage()
 
     with freeze_time("2000-01-01"):

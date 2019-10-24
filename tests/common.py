@@ -2,11 +2,10 @@
 
 from unittest.mock import Mock
 from inspect import iscoroutinefunction
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack
 
 import trio
 import attr
-import pendulum
 
 from parsec.core.types import WorkspaceRole
 from parsec.core.logged_core import LoggedCore
@@ -21,14 +20,6 @@ def addr_with_device_subdomain(addr, device_id):
     """
     device_specific_hostname = f"{device_id.user_id}.{device_id.device_name}.{addr.hostname}"
     return type(addr).from_url(addr.to_url().replace(addr.hostname, device_specific_hostname, 1))
-
-
-@contextmanager
-def freeze_time(time):
-    if isinstance(time, str):
-        time = pendulum.parse(time)
-    with pendulum.test(time):
-        yield time
 
 
 class AsyncMock(Mock):

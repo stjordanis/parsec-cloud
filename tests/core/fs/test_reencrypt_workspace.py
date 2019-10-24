@@ -13,11 +13,9 @@ from parsec.core.fs import (
     FSBadEncryptionRevision,
 )
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
-async def workspace(running_backend, alice_user_fs):
+async def workspace(running_backend, alice_user_fs, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w1")
         # Sync workspace manifest v1
@@ -152,7 +150,7 @@ async def test_concurrent_continue_reencryption(running_backend, workspace, alic
 
 
 @pytest.mark.trio
-async def test_reencryption_already_started(running_backend, alice_user_fs):
+async def test_reencryption_already_started(running_backend, alice_user_fs, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w1")
     await alice_user_fs.sync()
@@ -164,7 +162,9 @@ async def test_reencryption_already_started(running_backend, alice_user_fs):
 
 
 @pytest.mark.trio
-async def test_no_access_during_reencryption(running_backend, alice2_user_fs, workspace):
+async def test_no_access_during_reencryption(
+    running_backend, alice2_user_fs, workspace, freeze_time
+):
     # Workspace have been created with alice_user_fs, hence user alice2_user_fs
     # start with no local cache
     await alice2_user_fs.sync()

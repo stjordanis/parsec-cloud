@@ -26,7 +26,7 @@ from parsec.backend.user import (
 )
 from parsec.backend.realm import RealmGrantedRole
 
-from tests.common import freeze_time, addr_with_device_subdomain
+from tests.common import addr_with_device_subdomain
 
 
 @attr.s
@@ -150,7 +150,7 @@ def otheralice(local_device_factory, otherorg):
 
 
 @pytest.fixture
-def alice(local_device_factory, initial_user_manifest_state):
+def alice(local_device_factory, initial_user_manifest_state, freeze_time):
     device = local_device_factory("alice@dev1", is_admin=True)
     # Force alice user manifest v1 to be signed by user alice@dev1
     # This is needed given backend_factory bind alice@dev1 then alice@dev2,
@@ -162,7 +162,7 @@ def alice(local_device_factory, initial_user_manifest_state):
 
 
 @pytest.fixture
-def expiredalice(local_device_factory, initial_user_manifest_state, expiredorg):
+def expiredalice(local_device_factory, initial_user_manifest_state, expiredorg, freeze_time):
     device = local_device_factory("alice@dev1", expiredorg, is_admin=True)
     # Force alice user manifest v1 to be signed by user alice@dev1
     # This is needed given backend_factory bind alice@dev1 then alice@dev2,

@@ -13,8 +13,6 @@ from parsec.api.protocol import (
 )
 from parsec.backend.user import User, Device, UserInvitation, PEER_EVENT_MAX_WAIT
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 async def mallory_invitation(backend, alice, mallory):
@@ -46,7 +44,7 @@ async def user_claim(sock, **kwargs):
 
 @pytest.mark.trio
 async def test_user_claim_ok(
-    monkeypatch, backend, anonymous_backend_sock, coolorg, alice, mallory_invitation
+    monkeypatch, backend, anonymous_backend_sock, coolorg, alice, mallory_invitation, freeze_time
 ):
     user_invitation_retreived = trio.Event()
 
@@ -107,7 +105,9 @@ async def test_user_claim_ok(
 
 
 @pytest.mark.trio
-async def test_user_claim_timeout(mock_clock, backend, anonymous_backend_sock, mallory_invitation):
+async def test_user_claim_timeout(
+    mock_clock, backend, anonymous_backend_sock, mallory_invitation, freeze_time
+):
     with freeze_time(mallory_invitation.created_on), backend.event_bus.listen() as spy:
         async with user_claim(
             anonymous_backend_sock,
@@ -125,7 +125,9 @@ async def test_user_claim_timeout(mock_clock, backend, anonymous_backend_sock, m
 
 
 @pytest.mark.trio
-async def test_user_claim_denied(backend, anonymous_backend_sock, coolorg, mallory_invitation):
+async def test_user_claim_denied(
+    backend, anonymous_backend_sock, coolorg, mallory_invitation, freeze_time
+):
     with freeze_time(mallory_invitation.created_on), backend.event_bus.listen() as spy:
         async with user_claim(
             anonymous_backend_sock,
@@ -166,7 +168,7 @@ async def test_user_claim_unknown(anonymous_backend_sock, mallory):
 
 @pytest.mark.trio
 async def test_user_claim_already_exists(
-    mock_clock, backend, anonymous_backend_sock, alice, mallory_invitation
+    mock_clock, backend, anonymous_backend_sock, alice, mallory_invitation, freeze_time
 ):
     await backend.user.create_user(
         alice.organization_id,

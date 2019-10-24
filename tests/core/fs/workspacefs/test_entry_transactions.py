@@ -23,7 +23,7 @@ from parsec.core.fs.utils import is_folder_manifest
 from parsec.core.fs.storage import WorkspaceStorage
 from parsec.core.fs.exceptions import FSRemoteManifestNotFound
 
-from tests.common import freeze_time, call_with_control
+from tests.common import call_with_control
 
 
 @pytest.mark.trio
@@ -42,7 +42,7 @@ async def test_root_entry_info(alice_entry_transactions):
 
 
 @pytest.mark.trio
-async def test_file_create(alice_entry_transactions, alice_file_transactions, alice):
+async def test_file_create(alice_entry_transactions, alice_file_transactions, alice, freeze_time):
     entry_transactions = alice_entry_transactions
     file_transactions = alice_file_transactions
 

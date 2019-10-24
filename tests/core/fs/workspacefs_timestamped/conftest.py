@@ -3,8 +3,6 @@
 import pytest
 import pendulum
 
-from tests.common import freeze_time
-
 day0 = pendulum.Pendulum(1999, 12, 31)
 day1 = pendulum.Pendulum(2000, 1, 1)
 day2 = pendulum.Pendulum(2000, 1, 2)
@@ -24,7 +22,7 @@ day14 = pendulum.Pendulum(2000, 1, 14)
 
 @pytest.fixture
 @pytest.mark.trio
-async def alice_workspace(alice_user_fs, running_backend):
+async def alice_workspace(alice_user_fs, running_backend, freeze_time):
     with freeze_time(day0):
         wid = await alice_user_fs.workspace_create("w")
         workspace = alice_user_fs.get_workspace(wid)

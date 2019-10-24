@@ -4,14 +4,18 @@ import pytest
 from pendulum import Pendulum
 from unittest.mock import ANY
 
-from tests.common import freeze_time
-
 
 @pytest.mark.trio
 @pytest.mark.backend_not_populated
 @pytest.mark.skip  #  TODO refactoring?
 async def test_lazy_root_manifest_generation(
-    running_backend, backend_data_binder, local_storage_factory, user_fs_factory, coolorg, alice
+    running_backend,
+    backend_data_binder,
+    local_storage_factory,
+    user_fs_factory,
+    coolorg,
+    alice,
+    freeze_time,
 ):
     with freeze_time("2000-01-01"):
         await backend_data_binder.bind_organization(
@@ -65,6 +69,7 @@ async def test_concurrent_devices_agreed_on_root_manifest(
     coolorg,
     alice,
     alice2,
+    freeze_time,
 ):
     with freeze_time("2000-01-01"):
         await backend_data_binder.bind_organization(
@@ -146,7 +151,13 @@ async def test_concurrent_devices_agreed_on_root_manifest(
 @pytest.mark.backend_not_populated
 @pytest.mark.skip  #  TODO refactoring?
 async def test_reloading_v0_user_manifest(
-    running_backend, backend_data_binder, local_storage_factory, user_fs_factory, coolorg, alice
+    running_backend,
+    backend_data_binder,
+    local_storage_factory,
+    user_fs_factory,
+    coolorg,
+    alice,
+    freeze_time,
 ):
     # Initialize backend and local storage
     with freeze_time("2000-01-01"):

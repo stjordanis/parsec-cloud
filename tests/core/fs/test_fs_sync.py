@@ -8,7 +8,7 @@ from parsec.core.types import WorkspaceEntry, WorkspaceRole
 from parsec.core.backend_connection import BackendNotAvailable
 from parsec.core.fs.exceptions import FSBackendOfflineError
 
-from tests.common import freeze_time, create_shared_workspace
+from tests.common import create_shared_workspace
 
 
 async def assert_same_workspace(workspace, workspace2):
@@ -33,7 +33,7 @@ async def assert_same_workspace(workspace, workspace2):
 
 
 @pytest.mark.trio
-async def test_new_workspace(running_backend, alice, alice_user_fs, alice2_user_fs):
+async def test_new_workspace(running_backend, alice, alice_user_fs, alice2_user_fs, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w")
         workspace = alice_user_fs.get_workspace(wid)
@@ -78,7 +78,7 @@ async def test_new_workspace(running_backend, alice, alice_user_fs, alice2_user_
 
 @pytest.mark.trio
 @pytest.mark.parametrize("type", ["file", "folder"])
-async def test_new_empty_entry(type, running_backend, alice_user_fs, alice2_user_fs):
+async def test_new_empty_entry(type, running_backend, alice_user_fs, alice2_user_fs, freeze_time):
     with freeze_time("2000-01-01"):
         wid = await create_shared_workspace("w", alice_user_fs, alice2_user_fs)
     workspace = alice_user_fs.get_workspace(wid)
@@ -136,7 +136,7 @@ async def test_new_empty_entry(type, running_backend, alice_user_fs, alice2_user
 
 
 @pytest.mark.trio
-async def test_simple_sync(running_backend, alice_user_fs, alice2_user_fs):
+async def test_simple_sync(running_backend, alice_user_fs, alice2_user_fs, freeze_time):
     with freeze_time("2000-01-01"):
         wid = await create_shared_workspace("w", alice_user_fs, alice2_user_fs)
     workspace = alice_user_fs.get_workspace(wid)
@@ -181,7 +181,7 @@ async def test_simple_sync(running_backend, alice_user_fs, alice2_user_fs):
 
 
 @pytest.mark.trio
-async def test_fs_recursive_sync(running_backend, alice_user_fs):
+async def test_fs_recursive_sync(running_backend, alice_user_fs, freeze_time):
     with freeze_time("2000-01-01"):
         wid = await create_shared_workspace("w", alice_user_fs)
     workspace = alice_user_fs.get_workspace(wid)
@@ -226,7 +226,7 @@ async def test_fs_recursive_sync(running_backend, alice_user_fs):
 
 
 @pytest.mark.trio
-async def test_cross_sync(running_backend, alice_user_fs, alice2_user_fs):
+async def test_cross_sync(running_backend, alice_user_fs, alice2_user_fs, freeze_time):
     with freeze_time("2000-01-01"):
         wid = await create_shared_workspace("w", alice_user_fs, alice2_user_fs)
     workspace = alice_user_fs.get_workspace(wid)
@@ -288,7 +288,9 @@ async def test_cross_sync(running_backend, alice_user_fs, alice2_user_fs):
 
 
 @pytest.mark.trio
-async def test_sync_growth_by_truncate_file(running_backend, alice_user_fs, alice2_user_fs):
+async def test_sync_growth_by_truncate_file(
+    running_backend, alice_user_fs, alice2_user_fs, freeze_time
+):
     with freeze_time("2000-01-01"):
         wid = await create_shared_workspace("w", alice_user_fs, alice2_user_fs)
     workspace = alice_user_fs.get_workspace(wid)
@@ -313,7 +315,7 @@ async def test_sync_growth_by_truncate_file(running_backend, alice_user_fs, alic
 
 
 @pytest.mark.trio
-async def test_concurrent_update(running_backend, alice_user_fs, alice2_user_fs):
+async def test_concurrent_update(running_backend, alice_user_fs, alice2_user_fs, freeze_time):
     with freeze_time("2000-01-01"):
         wid = await create_shared_workspace("w", alice_user_fs, alice2_user_fs)
     workspace = alice_user_fs.get_workspace(wid)
@@ -404,7 +406,9 @@ async def test_concurrent_update(running_backend, alice_user_fs, alice2_user_fs)
 
 
 @pytest.mark.trio
-async def test_create_already_existing_folder_vlob(running_backend, alice_user_fs, alice2_user_fs):
+async def test_create_already_existing_folder_vlob(
+    running_backend, alice_user_fs, alice2_user_fs, freeze_time
+):
 
     # First create data locally
     with freeze_time("2000-01-02"):
@@ -447,7 +451,9 @@ async def test_create_already_existing_folder_vlob(running_backend, alice_user_f
 
 @pytest.mark.trio
 @pytest.mark.skip  # TODO: rewrite this test
-async def test_create_already_existing_file_vlob(running_backend, alice_user_fs, alice2_user_fs):
+async def test_create_already_existing_file_vlob(
+    running_backend, alice_user_fs, alice2_user_fs, freeze_time
+):
     with freeze_time("2000-01-01"):
         wid = await create_shared_workspace("w", alice_user_fs, alice2_user_fs)
     workspace = alice_user_fs.get_workspace(wid)
@@ -491,7 +497,9 @@ async def test_create_already_existing_file_vlob(running_backend, alice_user_fs,
 
 @pytest.mark.trio
 @pytest.mark.skip  # TODO: rewrite this test
-async def test_create_already_existing_block(running_backend, alice_user_fs, alice2_user_fs):
+async def test_create_already_existing_block(
+    running_backend, alice_user_fs, alice2_user_fs, freeze_time
+):
     # First create&sync an empty file
 
     with freeze_time("2000-01-02"):
@@ -552,7 +560,7 @@ async def test_create_already_existing_block(running_backend, alice_user_fs, ali
 
 
 @pytest.mark.trio
-async def test_sync_data_before_workspace(running_backend, alice_user_fs):
+async def test_sync_data_before_workspace(running_backend, alice_user_fs, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w")
     w = alice_user_fs.get_workspace(wid)

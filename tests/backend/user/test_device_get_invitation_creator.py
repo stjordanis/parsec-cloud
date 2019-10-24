@@ -6,8 +6,6 @@ from pendulum import Pendulum
 from parsec.api.protocol import DeviceID, device_get_invitation_creator_serializer
 from parsec.backend.user import DeviceInvitation, INVITATION_VALIDITY
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 async def alice_nd_invitation(backend, alice):
@@ -29,7 +27,9 @@ async def device_get_invitation_creator(sock, **kwargs):
 
 
 @pytest.mark.trio
-async def test_device_get_invitation_creator_too_late(anonymous_backend_sock, alice_nd_invitation):
+async def test_device_get_invitation_creator_too_late(
+    anonymous_backend_sock, alice_nd_invitation, freeze_time
+):
     with freeze_time(alice_nd_invitation.created_on.add(seconds=INVITATION_VALIDITY + 1)):
         rep = await device_get_invitation_creator(
             anonymous_backend_sock, invited_device_id=alice_nd_invitation.device_id
@@ -60,7 +60,12 @@ async def test_device_get_invitation_creator_bad_id(anonymous_backend_sock):
 
 @pytest.mark.trio
 async def test_device_get_invitation_creator_ok(
-    backend_data_binder_factory, backend, alice_nd_invitation, alice, anonymous_backend_sock
+    backend_data_binder_factory,
+    backend,
+    alice_nd_invitation,
+    alice,
+    anonymous_backend_sock,
+    freeze_time,
 ):
     binder = backend_data_binder_factory(backend)
 

@@ -7,7 +7,6 @@ from parsec.backend.user import INVITATION_VALIDITY
 from parsec.api.data import UserCertificateContent, DeviceCertificateContent
 from parsec.api.protocol import user_create_serializer
 
-from tests.common import freeze_time
 from tests.backend.user.test_access import user_get
 
 
@@ -153,7 +152,9 @@ async def test_user_create_already_exists(alice_backend_sock, alice, bob):
 
 
 @pytest.mark.trio
-async def test_user_create_not_matching_certified_on(alice_backend_sock, alice, mallory):
+async def test_user_create_not_matching_certified_on(
+    alice_backend_sock, alice, mallory, freeze_time
+):
     date1 = pendulum.Pendulum(2000, 1, 1)
     date2 = date1.add(seconds=1)
     cu = UserCertificateContent(
@@ -178,7 +179,7 @@ async def test_user_create_not_matching_certified_on(alice_backend_sock, alice, 
 
 
 @pytest.mark.trio
-async def test_user_create_certify_too_old(alice_backend_sock, alice, mallory):
+async def test_user_create_certify_too_old(alice_backend_sock, alice, mallory, freeze_time):
     too_old = pendulum.Pendulum(2000, 1, 1)
     now = too_old.add(seconds=INVITATION_VALIDITY + 1)
     cu = UserCertificateContent(

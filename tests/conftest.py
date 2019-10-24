@@ -45,7 +45,7 @@ from parsec.backend.config import (
 # TODO: needed ?
 pytest.register_assert_rewrite("tests.event_bus_spy")
 
-from tests.common import freeze_time, FreezeTestOnTransportError, addr_with_device_subdomain
+from tests.common import FreezeTestOnTransportError, addr_with_device_subdomain
 from tests.postgresql import (
     get_postgresql_url,
     bootstrap_postgresql_testbed,
@@ -474,6 +474,7 @@ def backend_factory(
     initial_user_manifest_state,
     blockstore,
     backend_store,
+    freeze_time,
 ):
     # Given the postgresql driver uses trio-asyncio, any coroutine dealing with
     # the backend should inherit from the one with the asyncio loop context manager.
@@ -696,3 +697,15 @@ async def adam_core(core_factory, adam):
 async def bob_core(core_factory, bob):
     async with core_factory(bob) as core:
         yield core
+
+
+@pytest.fixture
+def freeze_time(monkeypatch):
+    @contextlib.contextmanager
+    def _freeze_time(time):
+        if isinstance(time, str):
+            time = pendulum.parse(time)
+        with pendulum.test(time):
+            yield time
+
+    return _freeze_time

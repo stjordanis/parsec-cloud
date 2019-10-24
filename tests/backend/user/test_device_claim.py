@@ -12,8 +12,6 @@ from parsec.api.protocol import (
 )
 from parsec.backend.user import Device, DeviceInvitation, PEER_EVENT_MAX_WAIT
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 async def alice_nd_invitation(backend, alice):
@@ -47,7 +45,7 @@ async def device_claim(sock, **kwargs):
 
 @pytest.mark.trio
 async def test_device_claim_ok(
-    monkeypatch, backend, anonymous_backend_sock, alice, alice_nd_invitation
+    monkeypatch, backend, anonymous_backend_sock, alice, alice_nd_invitation, freeze_time
 ):
     device_invitation_retreived = trio.Event()
 
@@ -101,7 +99,7 @@ async def test_device_claim_ok(
 
 @pytest.mark.trio
 async def test_device_claim_timeout(
-    mock_clock, backend, anonymous_backend_sock, alice_nd_invitation
+    mock_clock, backend, anonymous_backend_sock, alice_nd_invitation, freeze_time
 ):
     with freeze_time(alice_nd_invitation.created_on), backend.event_bus.listen() as spy:
         async with device_claim(
@@ -120,7 +118,9 @@ async def test_device_claim_timeout(
 
 
 @pytest.mark.trio
-async def test_device_claim_denied(backend, anonymous_backend_sock, alice, alice_nd_invitation):
+async def test_device_claim_denied(
+    backend, anonymous_backend_sock, alice, alice_nd_invitation, freeze_time
+):
     with freeze_time(alice_nd_invitation.created_on), backend.event_bus.listen() as spy:
         async with device_claim(
             anonymous_backend_sock,
@@ -160,7 +160,7 @@ async def test_device_claim_unknown(anonymous_backend_sock, mallory):
 
 @pytest.mark.trio
 async def test_device_claim_already_exists(
-    mock_clock, backend, anonymous_backend_sock, alice, alice_nd_invitation
+    mock_clock, backend, anonymous_backend_sock, alice, alice_nd_invitation, freeze_time
 ):
     await backend.user.create_device(
         alice.organization_id,

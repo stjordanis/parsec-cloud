@@ -9,8 +9,6 @@ from parsec.core.remote_devices_manager import RemoteDevicesManager
 from parsec.core.fs import UserFS, FSLocalMissError
 from parsec.core.fs.storage import UserStorage
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 def local_storage_path(tmpdir):
@@ -21,7 +19,7 @@ def local_storage_path(tmpdir):
 
 
 @pytest.fixture
-def initialize_userfs_storage(initial_user_manifest_state, persistent_mockup):
+def initialize_userfs_storage(initial_user_manifest_state, persistent_mockup, freeze_time):
     async def _initialize_userfs_storage(device, storage):
         try:
             await storage.load_user_manifest()

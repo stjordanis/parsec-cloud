@@ -5,11 +5,9 @@ from pendulum import Pendulum
 
 from parsec.core.remote_devices_manager import RemoteDevicesManagerBackendOfflineError
 
-from tests.common import freeze_time
-
 
 @pytest.mark.trio
-async def test_retrieve_device(running_backend, alice_remote_devices_manager, bob):
+async def test_retrieve_device(running_backend, alice_remote_devices_manager, bob, freeze_time):
     remote_devices_manager = alice_remote_devices_manager
     d1 = Pendulum(2000, 1, 1)
     with freeze_time(d1):
@@ -42,7 +40,7 @@ async def test_retrieve_device(running_backend, alice_remote_devices_manager, bo
 
 
 @pytest.mark.trio
-async def test_retrieve_user(running_backend, alice_remote_devices_manager, bob):
+async def test_retrieve_user(running_backend, alice_remote_devices_manager, bob, freeze_time):
     remote_devices_manager = alice_remote_devices_manager
     d1 = Pendulum(2000, 1, 1)
     with freeze_time(d1):
@@ -79,7 +77,7 @@ async def test_retrieve_user(running_backend, alice_remote_devices_manager, bob)
 
 @pytest.mark.trio
 async def test_retrieve_user_and_devices(
-    running_backend, alice_remote_devices_manager, alice, alice2
+    running_backend, alice_remote_devices_manager, alice, alice2, freeze_time
 ):
     remote_devices_manager = alice_remote_devices_manager
     d1 = Pendulum(2000, 1, 1)

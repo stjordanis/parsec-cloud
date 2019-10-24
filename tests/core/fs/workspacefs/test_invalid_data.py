@@ -5,11 +5,9 @@ from pendulum import Pendulum
 
 from parsec.core.fs import FSError
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
-async def testbed(running_backend, alice_user_fs, alice):
+async def testbed(running_backend, alice_user_fs, alice, freeze_time):
     with freeze_time("2000-01-01"):
         wid = await alice_user_fs.workspace_create("w1")
         workspace = alice_user_fs.get_workspace(wid)

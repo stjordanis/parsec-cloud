@@ -7,8 +7,6 @@ from parsec.backend.user import INVITATION_VALIDITY
 from parsec.api.data import RevokedUserCertificateContent
 from parsec.api.protocol import user_revoke_serializer, HandshakeRevokedDevice
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 def alice_revocation_from_bob(alice, bob):
@@ -34,7 +32,9 @@ async def user_revoke(sock, **kwargs):
 
 
 @pytest.mark.trio
-async def test_user_revoke_ok(backend, backend_sock_factory, adam_backend_sock, alice, adam):
+async def test_user_revoke_ok(
+    backend, backend_sock_factory, adam_backend_sock, alice, adam, freeze_time
+):
     now = pendulum.Pendulum(2000, 10, 11)
     alice_revocation = RevokedUserCertificateContent(
         author=adam.device_id, timestamp=now, user_id=alice.user_id
@@ -105,7 +105,7 @@ async def test_user_revoke_invalid_certified(backend, alice_backend_sock, alice2
 
 
 @pytest.mark.trio
-async def test_user_revoke_certify_too_old(backend, alice_backend_sock, alice, bob):
+async def test_user_revoke_certify_too_old(backend, alice_backend_sock, alice, bob, freeze_time):
     now = pendulum.Pendulum(2000, 1, 1)
     revoked_user_certificate = RevokedUserCertificateContent(
         author=alice.device_id, timestamp=now, user_id=bob.user_id

@@ -9,7 +9,6 @@ from parsec.api.protocol import RealmRole
 from parsec.api.data import RealmRoleCertificateContent
 from parsec.backend.realm import RealmGrantedRole
 
-from tests.common import freeze_time
 from tests.backend.conftest import realm_update_roles, realm_get_role_certificates
 
 
@@ -99,7 +98,7 @@ async def test_update_roles_cannot_modify_self(backend, alice, alice_backend_soc
 @pytest.mark.trio
 @pytest.mark.parametrize("start_with_existing_role", (False, True))
 async def test_remove_role_idempotent(
-    backend, alice, bob, alice_backend_sock, realm, start_with_existing_role
+    backend, alice, bob, alice_backend_sock, realm, start_with_existing_role, freeze_time
 ):
     if start_with_existing_role:
         with freeze_time("2000-01-03"):
@@ -326,7 +325,9 @@ async def test_role_access_during_maintenance(
 
 
 @pytest.mark.trio
-async def test_get_role_certificates_partial(backend, alice, bob, adam, bob_backend_sock, realm):
+async def test_get_role_certificates_partial(
+    backend, alice, bob, adam, bob_backend_sock, realm, freeze_time
+):
     # Realm is created on 2000-01-02
 
     with freeze_time("2000-01-03"):
@@ -367,7 +368,7 @@ async def test_get_role_certificates_partial(backend, alice, bob, adam, bob_back
 
 @pytest.mark.trio
 async def test_get_role_certificates_no_longer_allowed(
-    backend, alice, bob, alice_backend_sock, realm
+    backend, alice, bob, alice_backend_sock, realm, freeze_time
 ):
     # Realm is created on 2000-01-02
 

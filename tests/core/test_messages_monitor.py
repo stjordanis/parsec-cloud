@@ -4,13 +4,13 @@ import pytest
 from unittest.mock import ANY
 from pendulum import Pendulum
 
-from tests.common import create_shared_workspace, freeze_time
+from tests.common import create_shared_workspace
 
 from parsec.core.types import WorkspaceEntry, WorkspaceRole
 
 
 @pytest.mark.trio
-async def test_new_sharing_trigger_event(alice_core, bob_core, running_backend):
+async def test_new_sharing_trigger_event(alice_core, bob_core, running_backend, freeze_time):
     # First, create a folder and sync it on backend
     with freeze_time("2000-01-01"):
         wid = await alice_core.user_fs.workspace_create("foo")
@@ -44,7 +44,7 @@ async def test_new_sharing_trigger_event(alice_core, bob_core, running_backend):
 
 
 @pytest.mark.trio
-async def test_revoke_sharing_trigger_event(alice_core, bob_core, running_backend):
+async def test_revoke_sharing_trigger_event(alice_core, bob_core, running_backend, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await create_shared_workspace("w", alice_core, bob_core)
 
@@ -79,7 +79,7 @@ async def test_revoke_sharing_trigger_event(alice_core, bob_core, running_backen
 
 
 @pytest.mark.trio
-async def test_new_reencryption_trigger_event(alice_core, bob_core, running_backend):
+async def test_new_reencryption_trigger_event(alice_core, bob_core, running_backend, freeze_time):
     with freeze_time("2000-01-02"):
         wid = await create_shared_workspace("w", alice_core, bob_core)
 

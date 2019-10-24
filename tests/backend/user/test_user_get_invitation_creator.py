@@ -5,8 +5,6 @@ import pytest
 from parsec.api.protocol import user_get_invitation_creator_serializer
 from parsec.backend.user import UserInvitation, INVITATION_VALIDITY
 
-from tests.common import freeze_time
-
 
 @pytest.fixture
 async def mallory_invitation(backend, alice, mallory):
@@ -26,7 +24,9 @@ async def user_get_invitation_creator(sock, **kwargs):
 
 
 @pytest.mark.trio
-async def test_user_get_invitation_creator_too_late(anonymous_backend_sock, mallory_invitation):
+async def test_user_get_invitation_creator_too_late(
+    anonymous_backend_sock, mallory_invitation, freeze_time
+):
     with freeze_time(mallory_invitation.created_on.add(seconds=INVITATION_VALIDITY + 1)):
         rep = await user_get_invitation_creator(
             anonymous_backend_sock, invited_user_id=mallory_invitation.user_id

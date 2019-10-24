@@ -7,7 +7,6 @@ from pendulum import Pendulum, now as pendulum_now
 from parsec.api.protocol import RealmRole, MaintenanceType
 from parsec.backend.realm import RealmGrantedRole
 
-from tests.common import freeze_time
 from tests.backend.test_message import message_get
 from tests.backend.conftest import (
     realm_status,
@@ -101,7 +100,7 @@ async def test_start_bad_per_participant_message(
 
 @pytest.mark.trio
 async def test_start_send_message_to_participants(
-    backend, alice, bob, alice_backend_sock, bob_backend_sock, realm
+    backend, alice, bob, alice_backend_sock, bob_backend_sock, realm, freeze_time
 ):
     await backend.realm.update_roles(
         alice.organization_id,
@@ -136,7 +135,7 @@ async def test_start_send_message_to_participants(
 
 
 @pytest.mark.trio
-async def test_start_reencryption_update_status(alice_backend_sock, alice, realm):
+async def test_start_reencryption_update_status(alice_backend_sock, alice, realm, freeze_time):
     with freeze_time("2000-01-02"):
         await realm_start_reencryption_maintenance(
             alice_backend_sock, realm, 2, pendulum_now(), {"alice": b"foo"}
@@ -387,7 +386,7 @@ async def test_reencryption_batch_bad_revisison(alice_backend_sock, realm):
 
 
 @pytest.mark.trio
-async def test_reencryption(alice, alice_backend_sock, realm, vlobs, vlob_atoms):
+async def test_reencryption(alice, alice_backend_sock, realm, vlobs, vlob_atoms, freeze_time):
     with freeze_time("2000-01-02"):
         await realm_start_reencryption_maintenance(
             alice_backend_sock, realm, 2, pendulum_now(), {"alice": b"foo"}

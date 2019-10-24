@@ -14,7 +14,6 @@ from parsec.api.protocol import (
 )
 from parsec.backend.realm import RealmGrantedRole
 
-from tests.common import freeze_time
 from tests.backend.conftest import vlob_create, vlob_update, vlob_read, vlob_list_versions
 
 
@@ -22,7 +21,7 @@ VLOB_ID = UUID("00000000000000000000000000000001")
 
 
 @pytest.mark.trio
-async def test_create_and_read(alice, alice_backend_sock, alice2_backend_sock, realm):
+async def test_create_and_read(alice, alice_backend_sock, alice2_backend_sock, realm, freeze_time):
     blob = b"Initial commit."
     with freeze_time("2000-01-02"):
         await vlob_create(alice_backend_sock, realm, VLOB_ID, blob)
@@ -38,7 +37,7 @@ async def test_create_and_read(alice, alice_backend_sock, alice2_backend_sock, r
 
 
 @pytest.mark.trio
-async def test_create_bad_timestamp(alice, alice_backend_sock, realm):
+async def test_create_bad_timestamp(alice, alice_backend_sock, realm, freeze_time):
     blob = b"Initial commit."
     d1 = Pendulum(2000, 1, 1)
     with freeze_time(d1):
@@ -266,7 +265,7 @@ async def test_update_ok(alice_backend_sock, vlobs):
 
 
 @pytest.mark.trio
-async def test_update_bad_timestamp(alice, alice_backend_sock, vlobs):
+async def test_update_bad_timestamp(alice, alice_backend_sock, vlobs, freeze_time):
     blob = b"Initial commit."
     d1 = Pendulum(2000, 1, 1)
     with freeze_time(d1):

@@ -17,7 +17,7 @@ from parsec.core.fs.storage import WorkspaceStorage
 from parsec.core.fs.workspacefs.file_transactions import FSInvalidFileDescriptor
 from parsec.core.fs.exceptions import FSRemoteBlockNotFound
 
-from tests.common import freeze_time, call_with_control
+from tests.common import call_with_control
 
 
 class File:
@@ -64,7 +64,7 @@ async def test_close_unknown_fd(alice_file_transactions):
 
 
 @pytest.mark.trio
-async def test_operations_on_file(alice_file_transactions, foo_txt):
+async def test_operations_on_file(alice_file_transactions, foo_txt, freeze_time):
     file_transactions = alice_file_transactions
 
     fd = foo_txt.open()
@@ -118,7 +118,7 @@ async def test_operations_on_file(alice_file_transactions, foo_txt):
 
 
 @pytest.mark.trio
-async def test_flush_file(alice_file_transactions, foo_txt):
+async def test_flush_file(alice_file_transactions, foo_txt, freeze_time):
     file_transactions = alice_file_transactions
 
     fd = foo_txt.open()

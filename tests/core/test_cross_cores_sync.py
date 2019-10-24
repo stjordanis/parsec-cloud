@@ -4,7 +4,6 @@ import pytest
 import trio
 from async_generator import asynccontextmanager
 
-from tests.common import freeze_time
 from tests.open_tcp_stream_mock_wrapper import offline
 
 
@@ -64,7 +63,7 @@ async def wait_for_entries_synced(core, entries_pathes):
 
 @pytest.mark.trio
 @pytest.mark.skip(reason="Recursive sync strategy need to be reworked")
-async def test_online_sync2(mock_clock, running_backend, core_factory, alice, alice2):
+async def test_online_sync2(mock_clock, running_backend, core_factory, alice, alice2, freeze_time):
     mock_clock.autojump_threshold = 0.1
 
     # Given the cores are initialized while the backend is online, we are
@@ -96,7 +95,9 @@ async def test_online_sync2(mock_clock, running_backend, core_factory, alice, al
 
 @pytest.mark.trio
 @pytest.mark.skip(reason="Recursive sync strategy need to be reworked")
-async def test_sync_then_clean_start(mock_clock, running_backend, core_factory, alice, alice2):
+async def test_sync_then_clean_start(
+    mock_clock, running_backend, core_factory, alice, alice2, freeze_time
+):
     mock_clock.autojump_threshold = 0.1
 
     # Given the cores are initialized while the backend is online, we are
@@ -126,7 +127,7 @@ async def test_sync_then_clean_start(mock_clock, running_backend, core_factory, 
 @pytest.mark.trio
 @pytest.mark.skip(reason="Recursive sync strategy need to be reworked")
 async def test_sync_then_fast_forward_on_start(
-    mock_clock, running_backend, core_factory, alice, alice2
+    mock_clock, running_backend, core_factory, alice, alice2, freeze_time
 ):
     mock_clock.autojump_threshold = 0.1
 
@@ -168,7 +169,7 @@ async def test_sync_then_fast_forward_on_start(
 @pytest.mark.trio
 @pytest.mark.skip(reason="Recursive sync strategy need to be reworked")
 async def test_fast_forward_on_offline_during_sync(
-    mock_clock, server_factory, backend, core_factory, alice, alice2
+    mock_clock, server_factory, backend, core_factory, alice, alice2, freeze_time
 ):
     mock_clock.rate = 10
 
