@@ -2,14 +2,8 @@
 
 import pytest
 from hypothesis import strategies as st
-from hypothesis_trio.stateful import (
-    initialize,
-    rule,
-    run_state_machine_as_test,
-    TrioRuleBasedStateMachine,
-)
+from hypothesis_trio.stateful import initialize, rule
 
-from tests.common import call_with_control
 from tests.oracles import FileOracle
 
 
@@ -18,74 +12,35 @@ PLAYGROUND_SIZE = BLOCK_SIZE * 10
 
 
 @pytest.mark.slow
-def test_fs_online_rwfile_and_sync(
-    hypothesis_settings,
-    backend_addr,
-    backend_factory,
-    server_factory,
-    local_storage_factory,
-    fs_factory,
-    alice,
-):
-    class FSOnlineRwFileAndSync(TrioRuleBasedStateMachine):
-        async def restart_fs(self, device, local_storage):
-            try:
-                await self.fs_controller.stop()
-            except AttributeError:
-                pass
-
-            async def _fs_controlled_cb(started_cb):
-                async with fs_factory(device=device, local_storage=local_storage) as fs:
-                    await started_cb(fs=fs)
-
-            self.fs_controller = await self.get_root_nursery().start(
-                call_with_control, _fs_controlled_cb
-            )
-
-        async def start_backend(self):
-            async def _backend_controlled_cb(started_cb):
-                async with backend_factory() as backend:
-                    async with server_factory(backend.handle_client, backend_addr) as server:
-                        await started_cb(backend=backend, server=server)
-
-            self.backend_controller = await self.get_root_nursery().start(
-                call_with_control, _backend_controlled_cb
-            )
-
-        @property
-        def fs(self):
-            return self.fs_controller.fs
-
-        @property
-        def backend(self):
-            return self.backend_controller.backend
-
+def test_fs_online_rwfile_and_sync(user_fs_online_state_machine, alice):
+    class FSOnlineRwFileAndSync(user_fs_online_state_machine):
         @initialize()
         async def init(self):
+            await self.reset_all()
             self.device = alice
-            self.local_storage = local_storage_factory(self.device)
             await self.start_backend()
-            await self.restart_fs(self.device, self.local_storage)
-            await self.fs.workspace_create("/w")
-            await self.fs.touch("/w/foo.txt")
-            await self.fs.sync("/")
+            await self.restart_user_fs(self.device)
+            self.wid = await self.user_fs.workspace_create("w")
+            workspace = self.user_fs.get_workspace(self.wid)
+            await workspace.touch("/foo.txt")
+            await workspace.sync()
+            await self.user_fs.sync()
             self.file_oracle = FileOracle(base_version=1)
 
         @rule()
         async def restart(self):
-            await self.restart_fs(self.device, self.local_storage)
+            await self.restart_user_fs(self.device)
 
         @rule()
         async def reset(self):
-            # TODO: would be cleaner to recreate a new device...
-            self.local_storage = local_storage_factory(self.device, force=True)
-            await self.restart_fs(self.device, self.local_storage)
-            await self.fs.sync("/")
+            await self.reset_user_fs(self.device)
+            await self.user_fs.sync()
             self.file_oracle.reset()
 
         @rule()
         async def sync(self):
-            await self.fs.sync("/")
+            workspace = self.user_fs.get_workspace(self.wid)
+            await workspace.sync()
             self.file_oracle.sync()
 
         @rule(
@@ -93,7 +48,8 @@ def test_fs_online_rwfile_and_sync(
             offset=st.integers(min_value=0, max_value=PLAYGROUND_SIZE),
         )
         async def atomic_read(self, size, offset):
-            content = await self.fs.file_read("/w/foo.txt", size=size, offset=offset)
+            workspace = self.user_fs.get_workspace(self.wid)
+            content = await workspace.read_bytes("/foo.txt", size=size, offset=offset)
             expected_content = self.file_oracle.read(size, offset)
             assert content == expected_content
 
@@ -102,21 +58,24 @@ def test_fs_online_rwfile_and_sync(
             content=st.binary(max_size=PLAYGROUND_SIZE),
         )
         async def atomic_write(self, offset, content):
-            await self.fs.file_write("/w/foo.txt", content=content, offset=offset)
+            workspace = self.user_fs.get_workspace(self.wid)
+            await workspace.write_bytes("/foo.txt", data=content, offset=offset, truncate=False)
             self.file_oracle.write(offset, content)
 
         @rule(length=st.integers(min_value=0, max_value=PLAYGROUND_SIZE))
         async def atomic_truncate(self, length):
-            await self.fs.file_truncate("/w/foo.txt", length=length)
+            workspace = self.user_fs.get_workspace(self.wid)
+            await workspace.truncate("/foo.txt", length=length)
             self.file_oracle.truncate(length)
 
         @rule()
         async def stat(self):
-            stat = await self.fs.stat("/w/foo.txt")
-            assert stat["type"] == "file"
-            assert stat["base_version"] == self.file_oracle.base_version
-            assert not stat["is_placeholder"]
-            assert stat["need_sync"] == self.file_oracle.need_sync
-            assert stat["size"] == self.file_oracle.size
+            workspace = self.user_fs.get_workspace(self.wid)
+            path_info = await workspace.path_info("/foo.txt")
+            assert path_info["type"] == "file"
+            assert path_info["base_version"] == self.file_oracle.base_version
+            assert not path_info["is_placeholder"]
+            assert path_info["need_sync"] == self.file_oracle.need_sync
+            assert path_info["size"] == self.file_oracle.size
 
-    run_state_machine_as_test(FSOnlineRwFileAndSync, settings=hypothesis_settings)
+    FSOnlineRwFileAndSync.run_as_test()

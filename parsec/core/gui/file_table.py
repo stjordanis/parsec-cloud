@@ -1,9 +1,11 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
+from collections import namedtuple
 import pendulum
+import pathlib
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QColor, QKeySequence
 from PyQt5.QtWidgets import (
     QTableWidget,
     QHeaderView,
@@ -11,18 +13,22 @@ from PyQt5.QtWidgets import (
     QStyleOptionViewItem,
     QStyle,
     QMenu,
+    QTableWidgetSelectionRange,
 )
 
 from parsec.core.types import WorkspaceRole
 
-from parsec.core.gui.lang import translate as _
+from parsec.core.gui.lang import translate as _, format_datetime
 from parsec.core.gui.file_items import (
     FileTableItem,
     CustomTableItem,
     FolderTableItem,
+    InconsistencyTableItem,
     FileType,
     NAME_DATA_INDEX,
     TYPE_DATA_INDEX,
+    UUID_DATA_INDEX,
+    COPY_STATUS_DATA_INDEX,
 )
 from parsec.core.gui.file_size import get_filesize
 
@@ -36,30 +42,45 @@ class ItemDelegate(QStyledItemDelegate):
         # individually, we don't want that, so we remove the focus
         if option.state & QStyle.State_HasFocus:
             view_option.state &= ~QStyle.State_HasFocus
+        if index.data(COPY_STATUS_DATA_INDEX):
+            view_option.font.setItalic(True)
         super().paint(painter, view_option, index)
 
 
 class FileTable(QTableWidget):
+    FIXED_COL_SIZE = 560
+    NAME_COL_MIN_SIZE = 150
+
     file_moved = pyqtSignal(str, str)
     item_activated = pyqtSignal(FileType, str)
+    files_dropped = pyqtSignal(list, str)
     delete_clicked = pyqtSignal()
     rename_clicked = pyqtSignal()
     open_clicked = pyqtSignal()
+    show_history_clicked = pyqtSignal()
+    paste_clicked = pyqtSignal()
+    cut_clicked = pyqtSignal()
+    copy_clicked = pyqtSignal()
+    file_path_clicked = pyqtSignal()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.previous_selection = []
         self.setColumnCount(5)
+
         h_header = self.horizontalHeader()
         h_header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         h_header.setSectionResizeMode(0, QHeaderView.Fixed)
-        h_header.setSectionResizeMode(1, QHeaderView.Stretch)
+        h_header.setSectionResizeMode(1, QHeaderView.Fixed)
         h_header.setSectionResizeMode(2, QHeaderView.Fixed)
         h_header.setSectionResizeMode(3, QHeaderView.Fixed)
         h_header.setSectionResizeMode(4, QHeaderView.Fixed)
 
         self.setColumnWidth(0, 60)
+        self.setColumnWidth(
+            1, max(self.size().width() - FileTable.FIXED_COL_SIZE, FileTable.NAME_COL_MIN_SIZE)
+        )
         self.setColumnWidth(2, 200)
         self.setColumnWidth(3, 200)
         self.setColumnWidth(4, 100)
@@ -73,35 +94,83 @@ class FileTable(QTableWidget):
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.cellDoubleClicked.connect(self.item_double_clicked)
         self.current_user_role = WorkspaceRole.OWNER
+        self.paste_disabled = True
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.setColumnWidth(
+            1, max(event.size().width() - FileTable.FIXED_COL_SIZE, FileTable.NAME_COL_MIN_SIZE)
+        )
+
+    def set_rows_cut(self, rows):
+        for row in range(self.rowCount()):
+            for col in range(5):
+                item = self.item(row, col)
+                item.setData(COPY_STATUS_DATA_INDEX, row in rows)
+
+    def keyReleaseEvent(self, event):
+        if not self.is_read_only():
+            if event.matches(QKeySequence.Copy):
+                self.copy_clicked.emit()
+            elif event.matches(QKeySequence.Cut):
+                self.cut_clicked.emit()
+            elif event.matches(QKeySequence.Paste):
+                if not self.paste_disabled:
+                    self.paste_clicked.emit()
 
     def selected_files(self):
+        SelectedFile = namedtuple("SelectedFile", ["row", "type", "name", "uuid"])
+
         files = []
         for r in self.selectedRanges():
             for row in range(r.topRow(), r.bottomRow() + 1):
                 item = self.item(row, 1)
-                files.append((row, item.data(TYPE_DATA_INDEX), item.data(NAME_DATA_INDEX)))
+                files.append(
+                    SelectedFile(
+                        row,
+                        item.data(TYPE_DATA_INDEX),
+                        item.data(NAME_DATA_INDEX),
+                        item.data(UUID_DATA_INDEX),
+                    )
+                )
         return files
+
+    def has_file(self, uuid):
+        return any(
+            uuid == self.item(row, 1).data(UUID_DATA_INDEX) for row in range(self.rowCount())
+        )
+
+    def is_read_only(self):
+        return self.current_user_role == WorkspaceRole.READER
 
     def show_context_menu(self, pos):
         global_pos = self.mapToGlobal(pos)
 
-        row = self.currentRow()
-        item = self.item(row, 0)
-        if (
-            not item
-            or item.data(TYPE_DATA_INDEX) == FileType.ParentFolder
-            or item.data(TYPE_DATA_INDEX) == FileType.ParentWorkspace
-        ):
-            return
-
+        selected = self.selected_files()
         menu = QMenu(self)
-        action = menu.addAction(_("Open"))
-        action.triggered.connect(self.open_clicked.emit)
-        if self.current_user_role != WorkspaceRole.READER:
-            action = menu.addAction(_("Rename"))
-            action.triggered.connect(self.rename_clicked.emit)
-            action = menu.addAction(_("Delete"))
-            action.triggered.connect(self.delete_clicked.emit)
+
+        if len(selected):
+            action = menu.addAction(_("FILE_MENU_OPEN"))
+            action.triggered.connect(self.open_clicked.emit)
+            if not self.is_read_only():
+                action = menu.addAction(_("FILE_MENU_RENAME"))
+                action.triggered.connect(self.rename_clicked.emit)
+                action = menu.addAction(_("FILE_MENU_DELETE"))
+                action.triggered.connect(self.delete_clicked.emit)
+                action = menu.addAction(_("FILE_MENU_COPY"))
+                action.triggered.connect(self.copy_clicked.emit)
+                action = menu.addAction(_("FILE_MENU_CUT"))
+                action.triggered.connect(self.cut_clicked.emit)
+        if len(selected) == 1:
+            action = menu.addAction(_("FILE_MENU_HISTORY"))
+            action.triggered.connect(self.show_history_clicked.emit)
+            action = menu.addAction(_("FILE_MENU_GET_LINK"))
+            action.triggered.connect(self.file_path_clicked.emit)
+        if not self.is_read_only():
+            action = menu.addAction(_("FILE_MENU_PASTE"))
+            action.triggered.connect(self.paste_clicked.emit)
+            if self.paste_disabled:
+                action.setDisabled(True)
         menu.exec_(global_pos)
 
     def item_double_clicked(self, row, column):
@@ -141,7 +210,8 @@ class FileTable(QTableWidget):
         item.setData(TYPE_DATA_INDEX, FileType.ParentFolder)
         item.setFlags(Qt.ItemIsEnabled)
         self.setItem(row_idx, 0, item)
-        item = CustomTableItem(_("Parent Folder"))
+        item = CustomTableItem(_("FILE_TREE_PARENT_FOLDER"))
+        item.setToolTip(_("FILE_TREE_PARENT_FOLDER_TOOLTIP"))
         item.setData(TYPE_DATA_INDEX, FileType.ParentFolder)
         item.setFlags(Qt.ItemIsEnabled)
         self.setItem(row_idx, 1, item)
@@ -165,7 +235,8 @@ class FileTable(QTableWidget):
         item.setData(TYPE_DATA_INDEX, FileType.ParentWorkspace)
         item.setFlags(Qt.ItemIsEnabled)
         self.setItem(row_idx, 0, item)
-        item = CustomTableItem(_("Parent Workspace"))
+        item = CustomTableItem(_("FILE_TREE_PARENT_WORKSPACE"))
+        item.setToolTip(_("FILE_TREE_PARENT_WORKSPACE_TOOLTIP"))
         item.setData(TYPE_DATA_INDEX, FileType.ParentWorkspace)
         item.setFlags(Qt.ItemIsEnabled)
         self.setItem(row_idx, 1, item)
@@ -182,68 +253,175 @@ class FileTable(QTableWidget):
         item.setFlags(Qt.ItemIsEnabled)
         self.setItem(row_idx, 4, item)
 
-    def add_folder(self, folder_name, is_synced):
+    def add_folder(self, folder_name, uuid, is_synced, selected=False):
         row_idx = self.rowCount()
         self.insertRow(row_idx)
         item = FolderTableItem(is_synced)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 0, item)
         item = CustomTableItem(folder_name)
         item.setData(NAME_DATA_INDEX, folder_name)
+        item.setToolTip("\n".join(folder_name[i : i + 64] for i in range(0, len(folder_name), 64)))
         item.setData(TYPE_DATA_INDEX, FileType.Folder)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 1, item)
         item = CustomTableItem()
         item.setData(NAME_DATA_INDEX, pendulum.datetime(1970, 1, 1))
         item.setData(TYPE_DATA_INDEX, FileType.Folder)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 2, item)
         item = CustomTableItem()
         item.setData(NAME_DATA_INDEX, pendulum.datetime(1970, 1, 1))
         item.setData(TYPE_DATA_INDEX, FileType.Folder)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 3, item)
         item = CustomTableItem()
         item.setData(NAME_DATA_INDEX, -1)
         item.setData(TYPE_DATA_INDEX, FileType.Folder)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 4, item)
+        if selected:
+            self.setRangeSelected(
+                QTableWidgetSelectionRange(row_idx, 0, row_idx, self.columnCount() - 1), True
+            )
 
-    def add_file(self, file_name, file_size, created_on, updated_on, is_synced):
+    def add_file(
+        self, file_name, uuid, file_size, created_on, updated_on, is_synced, selected=False
+    ):
         row_idx = self.rowCount()
         self.insertRow(row_idx)
         item = FileTableItem(is_synced, file_name)
         item.setData(NAME_DATA_INDEX, 1)
+        item.setData(TYPE_DATA_INDEX, FileType.File)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 0, item)
         item = CustomTableItem(file_name)
+        item.setToolTip("\n".join(file_name[i : i + 64] for i in range(0, len(file_name), 64)))
         item.setData(NAME_DATA_INDEX, file_name)
         item.setData(TYPE_DATA_INDEX, FileType.File)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 1, item)
-        item = CustomTableItem(created_on.format("%x %X"))
+        item = CustomTableItem(format_datetime(created_on))
         item.setData(NAME_DATA_INDEX, created_on)
         item.setData(TYPE_DATA_INDEX, FileType.File)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 2, item)
-        item = CustomTableItem(updated_on.format("%x %X"))
+        item = CustomTableItem(format_datetime(updated_on))
         item.setData(NAME_DATA_INDEX, updated_on)
         item.setData(TYPE_DATA_INDEX, FileType.File)
+        item.setData(UUID_DATA_INDEX, uuid)
         self.setItem(row_idx, 3, item)
         item = CustomTableItem(get_filesize(file_size))
         item.setData(NAME_DATA_INDEX, file_size)
         item.setData(TYPE_DATA_INDEX, FileType.File)
+        item.setData(UUID_DATA_INDEX, uuid)
+        self.setItem(row_idx, 4, item)
+        if selected:
+            self.setRangeSelected(
+                QTableWidgetSelectionRange(row_idx, 0, row_idx, self.columnCount() - 1), True
+            )
+
+    def add_inconsistency(self, file_name, uuid):
+        inconsistency_color = QColor(255, 144, 155)
+        row_idx = self.rowCount()
+        self.insertRow(row_idx)
+        item = InconsistencyTableItem(False)
+        item.setData(NAME_DATA_INDEX, 1)
+        item.setData(TYPE_DATA_INDEX, FileType.Inconsistency)
+        item.setData(UUID_DATA_INDEX, uuid)
+        item.setBackground(inconsistency_color)
+        self.setItem(row_idx, 0, item)
+        item = CustomTableItem(file_name)
+        item.setToolTip("\n".join(file_name[i : i + 64] for i in range(0, len(file_name), 64)))
+        item.setData(NAME_DATA_INDEX, file_name)
+        item.setData(TYPE_DATA_INDEX, FileType.Inconsistency)
+        item.setData(UUID_DATA_INDEX, uuid)
+        item.setBackground(inconsistency_color)
+        self.setItem(row_idx, 1, item)
+        item = CustomTableItem()
+        item.setData(NAME_DATA_INDEX, pendulum.datetime(1970, 1, 1))
+        item.setData(TYPE_DATA_INDEX, FileType.Inconsistency)
+        item.setBackground(inconsistency_color)
+        item.setData(UUID_DATA_INDEX, uuid)
+        self.setItem(row_idx, 2, item)
+        item = CustomTableItem()
+        item.setData(NAME_DATA_INDEX, pendulum.datetime(1970, 1, 1))
+        item.setData(TYPE_DATA_INDEX, FileType.Inconsistency)
+        item.setData(UUID_DATA_INDEX, uuid)
+        item.setBackground(inconsistency_color)
+        self.setItem(row_idx, 3, item)
+        item = CustomTableItem(-1)
+        item.setData(NAME_DATA_INDEX, -1)
+        item.setData(TYPE_DATA_INDEX, FileType.Inconsistency)
+        item.setData(UUID_DATA_INDEX, uuid)
+        item.setBackground(inconsistency_color)
         self.setItem(row_idx, 4, item)
 
-    def dropEvent(self, event):
-        if event.source() != self:
-            return
-        target_row = self.indexAt(event.pos()).row()
-        rows = set([i.row() for i in self.selectedIndexes() if i != target_row])
-        if not rows:
-            return
-        file_type = self.item(target_row, 0).data(TYPE_DATA_INDEX)
-        target_name = self.item(target_row, 1).text()
+    def dragEnterEvent(self, event):
+        if not self.is_read_only():
+            event.accept()
+        else:
+            event.ignore()
 
-        if file_type != FileType.ParentFolder and file_type != FileType.Folder:
+    def dragMoveEvent(self, event):
+        if self.is_read_only():
+            event.ignore()
             return
-        for row in rows:
-            file_name = self.item(row, 1).text()
-            if file_type == FileType.ParentFolder:
-                self.file_moved.emit(file_name, "..")
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            if event.source() != self:
+                event.ignore()
+                return
+            target_row = self.indexAt(event.pos()).row()
+            item = self.item(target_row, 0)
+            if not item:
+                return
+            file_type = item.data(TYPE_DATA_INDEX)
+            if file_type == FileType.ParentFolder or file_type == FileType.Folder:
+                event.accept()
             else:
-                self.file_moved.emit(file_name, target_name)
-            self.removeRow(row)
-        event.accept()
+                event.ignore()
+
+    def dropEvent(self, event):
+        if self.is_read_only():
+            event.ignore()
+            return
+        if event.mimeData().hasUrls():
+            event.accept()
+            target_row = self.indexAt(event.pos()).row()
+            target_item = self.item(target_row, 0)
+            files = [pathlib.Path(url.toLocalFile()) for url in event.mimeData().urls()]
+            if not target_item:
+                self.files_dropped.emit(files, ".")
+                return
+            target_type = target_item.data(TYPE_DATA_INDEX)
+            if target_type == FileType.File or target_type == FileType.ParentWorkspace:
+                self.files_dropped.emit(files, ".")
+            elif target_type == FileType.ParentFolder:
+                self.files_dropped.emit(files, "..")
+            elif target_type == FileType.Folder:
+                self.files_dropped.emit(files, self.item(target_row, 1).text())
+        else:
+            if event.source() != self:
+                return
+            target_row = self.indexAt(event.pos()).row()
+            rows = set([i.row for i in self.selected_files() if i.row != target_row])
+            if not rows:
+                return
+            if not self.item(target_row, 0):
+                return
+            file_type = self.item(target_row, 0).data(TYPE_DATA_INDEX)
+            target_name = self.item(target_row, 1).text()
+
+            if file_type != FileType.ParentFolder and file_type != FileType.Folder:
+                return
+            for row in rows:
+                file_name = self.item(row, 1).text()
+                if file_type == FileType.ParentFolder:
+                    self.file_moved.emit(file_name, "..")
+                else:
+                    self.file_moved.emit(file_name, target_name)
+            for row in rows:
+                self.removeRow(row)
+            event.accept()

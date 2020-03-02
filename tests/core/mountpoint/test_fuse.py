@@ -11,14 +11,14 @@ from parsec.core.mountpoint import mountpoint_manager_factory, MountpointDriverC
 @pytest.mark.linux  # win32 doesn't allow to remove an opened file
 @pytest.mark.mountpoint
 def test_delete_then_close_file(mountpoint_service):
-    async def _bootstrap(user_fs, fs, mountpoint_manager):
-        await fs.touch(f"/w/with_fsync.txt")
-        await fs.touch(f"/w/without_fsync.txt")
+    async def _bootstrap(user_fs, mountpoint_manager):
+        workspace = user_fs.get_workspace(mountpoint_service.wid)
+        await workspace.touch("/with_fsync.txt")
+        await workspace.touch("/without_fsync.txt")
 
-    mountpoint_service.start()
     mountpoint_service.execute(_bootstrap)
 
-    w_path = mountpoint_service.get_default_workspace_mountpoint()
+    w_path = mountpoint_service.wpath
 
     path = w_path / "with_fsync.txt"
     fd = os.open(path, os.O_RDWR)
@@ -35,35 +35,36 @@ def test_delete_then_close_file(mountpoint_service):
 @pytest.mark.linux
 @pytest.mark.trio
 @pytest.mark.mountpoint
-async def test_unmount_with_fusermount(base_mountpoint, alice, alice_fs, alice_user_fs, event_bus):
-    mountpoint_path = base_mountpoint / "w"
+async def test_unmount_with_fusermount(base_mountpoint, alice, alice_user_fs, event_bus):
     wid = await alice_user_fs.workspace_create("w")
-    await alice_fs.touch("/w/bar.txt")
-
-    bar_txt = trio.Path(f"{mountpoint_path}/bar.txt")
+    workspace = alice_user_fs.get_workspace(wid)
+    await workspace.touch("/bar.txt")
 
     async with mountpoint_manager_factory(
         alice_user_fs, event_bus, base_mountpoint
     ) as mountpoint_manager:
 
         with event_bus.listen() as spy:
-            await mountpoint_manager.mount_workspace(wid)
+            mountpoint_path = await mountpoint_manager.mount_workspace(wid)
             command = f"fusermount -u {mountpoint_path}".split()
 
-            returncode = await trio.Process(command).wait()
+            completed_process = await trio.run_process(command)
             with trio.fail_after(1):
                 # fusermount might fail for some reasons
-                while returncode:
-                    returncode = await trio.Process(command).wait()
-                await spy.wait("mountpoint.stopped", kwargs={"mountpoint": mountpoint_path})
+                while completed_process.returncode:
+                    completed_process = await trio.run_process(command)
+                await spy.wait("mountpoint.stopped", {"mountpoint": mountpoint_path})
 
-        assert not await bar_txt.exists()
+        assert not await trio.Path(mountpoint_path / "bar.txt").exists()
+
+    # Mountpoint path should be removed on umounting
+    assert not await trio.Path(mountpoint_path).exists()
 
 
 @pytest.mark.linux
 @pytest.mark.trio
 @pytest.mark.mountpoint
-async def test_hard_crash_in_fuse_thread(base_mountpoint, alice_user_fs, alice_fs):
+async def test_hard_crash_in_fuse_thread(base_mountpoint, alice_user_fs):
     wid = await alice_user_fs.workspace_create("w")
     mountpoint_path = base_mountpoint / "w"
 
@@ -83,6 +84,28 @@ async def test_hard_crash_in_fuse_thread(base_mountpoint, alice_user_fs, alice_f
             assert exc.value.args == (
                 f"Fuse has crashed on {mountpoint_path}: Unknown error code: Tough luck...",
             )
+
+    # Mountpoint path should be removed on umounting
+    assert not await trio.Path(mountpoint_path).exists()
+
+
+@pytest.mark.linux
+@pytest.mark.trio
+@pytest.mark.mountpoint
+async def test_unmount_due_to_cancelled_scope(base_mountpoint, alice, alice_user_fs, event_bus):
+    mountpoint_path = base_mountpoint / "w"
+    wid = await alice_user_fs.workspace_create("w")
+
+    with trio.CancelScope() as cancel_scope:
+        async with mountpoint_manager_factory(
+            alice_user_fs, event_bus, base_mountpoint
+        ) as mountpoint_manager:
+
+            await mountpoint_manager.mount_workspace(wid)
+            cancel_scope.cancel()
+
+    # Mountpoint path should be removed on umounting
+    assert not await trio.Path(mountpoint_path).exists()
 
 
 @pytest.mark.linux
@@ -126,8 +149,7 @@ async def test_mountpoint_path_already_in_use_concurrent_with_mountpoint(
 ):
     # Create a workspace and make it available in two devices
     wid = await alice_user_fs.workspace_create("w")
-    workspace = alice_user_fs.get_workspace(wid)
-    await workspace.sync("/")
+    await alice_user_fs.sync()
     await alice2_user_fs.sync()
 
     mountpoint_path = base_mountpoint.absolute() / "w"
@@ -140,7 +162,7 @@ async def test_mountpoint_path_already_in_use_concurrent_with_mountpoint(
             task_status.started()
             await trio.sleep_forever()
 
-    async with trio.open_nursery() as nursery:
+    async with trio.open_service_nursery() as nursery:
         await nursery.start(_mount_alice2_w_mountpoint)
 
         # Here instead of checking the path can be used as a mountpoint, we

@@ -4,9 +4,9 @@ from PyQt5.QtCore import pyqtSignal, QSize
 from PyQt5.QtGui import QPixmap, QColor
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect, QWidget
 
+from parsec.core.gui import desktop
 from parsec.core.gui.mount_widget import MountWidget
 from parsec.core.gui.users_widget import UsersWidget
-from parsec.core.gui.settings_widget import SettingsWidget
 from parsec.core.gui.devices_widget import DevicesWidget
 from parsec.core.gui.menu_widget import MenuWidget
 from parsec.core.gui.lang import translate as _
@@ -14,24 +14,30 @@ from parsec.core.gui.custom_widgets import NotificationTaskbarButton
 from parsec.core.gui.notification_center_widget import NotificationCenterWidget
 from parsec.core.gui.ui.central_widget import Ui_CentralWidget
 
-from parsec.core.backend_connection.monitor import BackendState, current_backend_connection_state
+from parsec.api.protocol import (
+    HandshakeAPIVersionError,
+    HandshakeRevokedDevice,
+    HandshakeOrganizationExpired,
+)
+from parsec.core.backend_connection import BackendConnStatus
+from parsec.core.fs import (
+    FSWorkspaceNoReadAccess,
+    FSWorkspaceNoWriteAccess,
+    FSWorkspaceInMaintenance,
+)
 
 
 class CentralWidget(QWidget, Ui_CentralWidget):
     NOTIFICATION_EVENTS = [
-        "backend.connection.lost",
-        "backend.connection.ready",
-        "backend.connection.incompatible_version",
+        "backend.connection.changed",
         "mountpoint.stopped",
-        "sharing.granted",
-        "sharing.revoked",
+        "mountpoint.remote_error",
+        "mountpoint.unhandled_error",
         "sharing.updated",
         "fs.entry.file_update_conflicted",
-        "fs.access_backend_offline",
-        "fs.access_crypto_error",
     ]
 
-    connection_state_changed = pyqtSignal(int)
+    connection_state_changed = pyqtSignal(object, object)
     logout_requested = pyqtSignal()
     new_notification = pyqtSignal(str, str)
 
@@ -47,34 +53,28 @@ class CentralWidget(QWidget, Ui_CentralWidget):
         self.widget_menu.layout().addWidget(self.menu)
         self.notification_center = NotificationCenterWidget(parent=self)
         self.button_notif = NotificationTaskbarButton()
+        self.button_notif.setToolTip(_("BUTTON_TASKBAR_NOTIFICATION"))
         self.widget_notif.layout().addWidget(self.notification_center)
         self.notification_center.hide()
 
-        self.event_bus.connect("backend.connection.ready", self._on_connection_changed)
-        self.event_bus.connect("backend.connection.lost", self._on_connection_changed)
-        self.event_bus.connect(
-            "backend.connection.incompatible_version", self._on_connection_changed
-        )
         for e in self.NOTIFICATION_EVENTS:
             self.event_bus.connect(e, self.handle_event)
 
-        self._on_connection_state_changed(current_backend_connection_state(event_bus).value)
         self.label_mountpoint.setText(str(self.core.config.mountpoint_base_dir))
+        self.label_mountpoint.clicked.connect(self.open_mountpoint)
         self.menu.organization = self.core.device.organization_addr.organization_id
         self.menu.username = self.core.device.user_id
         self.menu.device = self.core.device.device_name
+        self.menu.organization_url = str(self.core.device.organization_addr)
 
         self.new_notification.connect(self.on_new_notification)
         self.menu.files_clicked.connect(self.show_mount_widget)
         self.menu.users_clicked.connect(self.show_users_widget)
-        self.menu.settings_clicked.connect(self.show_settings_widget)
         self.menu.devices_clicked.connect(self.show_devices_widget)
         self.menu.logout_clicked.connect(self.logout_requested.emit)
         self.button_notif.clicked.connect(self.show_notification_center)
         self.connection_state_changed.connect(self._on_connection_state_changed)
         self.notification_center.close_requested.connect(self.close_notification_center)
-        if current_backend_connection_state(event_bus) == BackendState.INCOMPATIBLE_VERSION:
-            self.handle_event("backend.connection.incompatible_version")
 
         effect = QGraphicsDropShadowEffect(self)
         effect.setColor(QColor(100, 100, 100))
@@ -83,62 +83,71 @@ class CentralWidget(QWidget, Ui_CentralWidget):
         effect.setYOffset(2)
         self.widget_notif.setGraphicsEffect(effect)
 
+        self.mount_widget = MountWidget(self.core, self.jobs_ctx, self.event_bus, parent=self)
+        self.widget_central.layout().insertWidget(0, self.mount_widget)
+        self.mount_widget.widget_switched.connect(self.set_taskbar_buttons)
+
+        self.users_widget = UsersWidget(self.core, self.jobs_ctx, self.event_bus, parent=self)
+        self.widget_central.layout().insertWidget(0, self.users_widget)
+
+        self.devices_widget = DevicesWidget(self.core, self.jobs_ctx, self.event_bus, parent=self)
+        self.widget_central.layout().insertWidget(0, self.devices_widget)
+
+        self._on_connection_state_changed(
+            self.core.backend_conn.status, self.core.backend_conn.status_exc
+        )
         self.show_mount_widget()
 
-    def disconnect_all(self):
-        self.event_bus.disconnect("backend.connection.ready", self._on_connection_changed)
-        self.event_bus.disconnect("backend.connection.lost", self._on_connection_changed)
-        self.event_bus.disconnect(
-            "backend.connection.incompatible_version", self._on_connection_changed
-        )
-        for e in self.NOTIFICATION_EVENTS:
-            self.event_bus.disconnect(e, self.handle_event)
-        item = self.widget_central.layout().itemAt(0)
-        if item:
-            item.widget().disconnect_all()
+    def open_mountpoint(self, path):
+        desktop.open_file(path)
 
     def handle_event(self, event, **kwargs):
-        if event == "backend.connection.lost":
-            self.new_notification.emit("WARNING", _("Disconnected from the backend."))
-        elif event == "backend.connection.ready":
-            self.new_notification.emit("INFO", _("Connected to the backend."))
-        elif event == "backend.connection.incompatible_version":
-            self.new_notification.emit(
-                "WARNING", _("Cannot connect to backend : incompatible version detected.")
-            )
+        if event == "backend.connection.changed":
+            self.connection_state_changed.emit(kwargs["status"], kwargs["status_exc"])
         elif event == "mountpoint.stopped":
-            self.new_notification.emit("WARNING", _("Mountpoint has been unmounted."))
-        elif event == "sharing.granted":
-            self.new_notification.emit(
-                "INFO", _("Workspace '{}' shared with you").format(kwargs["new_entry"].name)
-            )
-        elif event == "sharing.updated":
-            self.new_notification.emit(
-                "INFO",
-                _("Your role on Workspace '{}' has changed changed").format(
-                    kwargs["new_entry"].name
-                ),
-            )
-        elif event == "sharing.revoked":
-            self.new_notification.emit(
-                "INFO",
-                _("Workspace '{}' no longer shared with you").format(kwargs["previous_entry"].name),
-            )
-        elif event == "fs.entry.file_update_conflicted":
-            self.new_notification.emit(
-                "WARNING", _("Conflict while syncing file '{}'.").format(kwargs["path"])
-            )
-        elif event == "fs.access_backend_offline":
-            self.new_notification.emit(
-                "WARNING",
-                _("File {} is not currently available in local: {}").format(
-                    kwargs["path"], kwargs["msg"]
-                ),
-            )
-        elif event == "fs.access_crypto_error":
+            self.new_notification.emit("WARNING", _("NOTIF_WARN_MOUNTPOINT_UNMOUNTED"))
+        elif event == "mountpoint.remote_error":
+            exc = kwargs["exc"]
+            path = kwargs["path"]
+            if isinstance(exc, FSWorkspaceNoReadAccess):
+                msg = _("NOTIF_WARN_WORKSPACE_READ_ACCESS_LOST_{}").format(path)
+            elif isinstance(exc, FSWorkspaceNoWriteAccess):
+                msg = _("NOTIF_WARN_WORKSPACE_WRITE_ACCESS_LOST_{}").format(path)
+            elif isinstance(exc, FSWorkspaceInMaintenance):
+                msg = _("NOTIF_WARN_WORKSPACE_IN_MAINTENANCE_{}").format(path)
+            else:
+                msg = _("NOTIF_WARN_MOUNTPOINT_REMOTE_ERROR_{}_{}").format(path, str(exc))
+            self.new_notification.emit("WARNING", msg)
+        elif event == "mountpoint.unhandled_error":
+            exc = kwargs["exc"]
+            path = kwargs["path"]
+            operation = kwargs["operation"]
             self.new_notification.emit(
                 "ERROR",
-                _("Cryptographic error on file {}: {}").format(kwargs["path"], kwargs["msg"]),
+                _("NOTIF_ERR_MOUNTPOINT_UNEXPECTED_ERROR_{}_{}_{}").format(
+                    operation, path, str(exc)
+                ),
+            )
+        elif event == "sharing.updated":
+            new_entry = kwargs["new_entry"]
+            previous_entry = kwargs["previous_entry"]
+            new_role = getattr(new_entry, "role", None)
+            previous_role = getattr(previous_entry, "role", None)
+            if new_role is not None and previous_role is None:
+                self.new_notification.emit(
+                    "INFO", _("NOTIF_INFO_WORKSPACE_SHARED_{}").format(new_entry.name)
+                )
+            elif new_role is not None and previous_role is not None:
+                self.new_notification.emit(
+                    "INFO", _("NOTIF_INFO_WORKSPACE_ROLE_UPDATED_{}").format(new_entry.name)
+                )
+            elif new_role is None and previous_role is not None:
+                self.new_notification.emit(
+                    "INFO", _("NOTIF_INFO_WORKSPACE_UNSHARED_{}").format(previous_entry.name)
+                )
+        elif event == "fs.entry.file_update_conflicted":
+            self.new_notification.emit(
+                "WARNING", _("NOTIF_WARN_SYNC_CONFLICT_{}").format(kwargs["path"])
             )
 
     def close_notification_center(self):
@@ -154,22 +163,48 @@ class CentralWidget(QWidget, Ui_CentralWidget):
             self.button_notif.setChecked(True)
             self.button_notif.reset_notif_count()
 
-    def _on_connection_state_changed(self, state):
-        if state == BackendState.READY.value:
-            self.menu.label_connection_text.setText(_("Connected"))
-            self.menu.label_connection_icon.setPixmap(
-                QPixmap(":/icons/images/icons/cloud_online.png")
-            )
-        elif state == BackendState.LOST.value:
-            self.menu.label_connection_text.setText(_("Disconnected"))
-            self.menu.label_connection_icon.setPixmap(
-                QPixmap(":/icons/images/icons/cloud_offline.png")
-            )
-        elif state == BackendState.INCOMPATIBLE_VERSION.value:
-            self.menu.label_connection_text.setText(_("Bad Version"))
-            self.menu.label_connection_icon.setPixmap(
-                QPixmap(":/icons/images/icons/cloud_offline.png")
-            )
+    def _on_connection_state_changed(self, status, status_exc):
+        text = None
+        icon = None
+        tooltip = None
+        notif = None
+
+        if status in (BackendConnStatus.READY, BackendConnStatus.INITIALIZING):
+            tooltip = text = _("BACKEND_STATE_CONNECTED")
+            icon = QPixmap(":/icons/images/icons/cloud_online.png")
+
+        elif status == BackendConnStatus.LOST:
+            tooltip = text = _("BACKEND_STATE_DISCONNECTED")
+            icon = QPixmap(":/icons/images/icons/cloud_offline.png")
+
+        elif status == BackendConnStatus.REFUSED:
+            cause = status_exc.__cause__
+            if isinstance(cause, HandshakeAPIVersionError):
+                tooltip = _("BACKEND_STATE_REASON_REFUSED_API_MISMATCH_{}").format(
+                    ", ".join([v.version for v in cause.backend_versions])
+                )
+            elif isinstance(cause, HandshakeRevokedDevice):
+                tooltip = _("BACKEND_STATE_REASON_REVOKED_DEVICE")
+            elif isinstance(cause, HandshakeOrganizationExpired):
+                tooltip = _("BACKEND_STATE_REASON_REFUSED_ORGANIZATION_EXPIRED")
+            else:
+                tooltip = _("BACKEND_STATE_REASON_REFUSED_DEFAULT")
+            text = _("BACKEND_STATE_DISCONNECTED")
+            icon = QPixmap(":/icons/images/icons/cloud_offline.png")
+            notif = ("WARNING", tooltip)
+
+        elif status == BackendConnStatus.CRASHED:
+            text = _("BACKEND_STATE_DISCONNECTED")
+            tooltip = _("BACKEND_STATE_CRASHED_{}").format(str(status_exc.__cause__))
+            icon = QPixmap(":/icons/images/icons/cloud_offline.png")
+            notif = ("ERROR", tooltip)
+
+        self.menu.label_connection_text.setText(text)
+        self.menu.label_connection_text.setToolTip(tooltip)
+        self.menu.label_connection_icon.setPixmap(icon)
+        self.menu.label_connection_icon.setToolTip(tooltip)
+        if notif:
+            self.new_notification.emit(*notif)
 
     def on_new_notification(self, notif_type, msg):
         self.notification_center.add_notification(notif_type, msg)
@@ -177,57 +212,34 @@ class CentralWidget(QWidget, Ui_CentralWidget):
             self.button_notif.inc_notif_count()
             self.button_notif.repaint()
 
-    def _on_connection_changed(self, event):
-        if event == "backend.connection.ready":
-            self.connection_state_changed.emit(BackendState.READY.value)
-        elif event == "backend.connection.lost":
-            self.connection_state_changed.emit(BackendState.LOST.value)
-        elif event == "backend.connection.incompatible_version":
-            self.connection_state_changed.emit(BackendState.INCOMPATIBLE_VERSION.value)
-
     def show_mount_widget(self):
         self.clear_widgets()
-        mount_widget = MountWidget(self.core, self.jobs_ctx, self.event_bus, parent=self)
-        self.widget_central.layout().insertWidget(0, mount_widget)
         self.menu.activate_files()
-        self.label_title.setText(_("Documents"))
-        self.set_taskbar_buttons(mount_widget.get_taskbar_buttons())
-        mount_widget.widget_switched.connect(self.set_taskbar_buttons)
-        mount_widget.show()
+        self.label_title.setText(_("MENU_DOCUMENTS"))
+        self.set_taskbar_buttons(self.mount_widget.get_taskbar_buttons())
+        self.mount_widget.show()
+        self.mount_widget.show_workspaces_widget()
 
     def show_users_widget(self):
         self.clear_widgets()
-        users_widget = UsersWidget(self.core, self.jobs_ctx, self.event_bus, parent=self)
-        self.widget_central.layout().insertWidget(0, users_widget)
         self.menu.activate_users()
-        self.label_title.setText(_("Users"))
-        self.set_taskbar_buttons(users_widget.get_taskbar_buttons())
-        users_widget.show()
+        self.label_title.setText(_("MENU_USERS"))
+        self.set_taskbar_buttons(self.users_widget.get_taskbar_buttons())
+        self.users_widget.show()
 
     def show_devices_widget(self):
         self.clear_widgets()
-        devices_widget = DevicesWidget(self.core, self.jobs_ctx, self.event_bus, parent=self)
-        self.widget_central.layout().insertWidget(0, devices_widget)
         self.menu.activate_devices()
-        self.label_title.setText(_("Devices"))
-        self.set_taskbar_buttons(devices_widget.get_taskbar_buttons())
-        devices_widget.show()
-
-    def show_settings_widget(self):
-        self.clear_widgets()
-        settings_widget = SettingsWidget(self.core.config, self.event_bus, parent=self)
-        self.widget_central.layout().insertWidget(0, settings_widget)
-        self.menu.activate_settings()
-        self.label_title.setText(_("Settings"))
-        self.set_taskbar_buttons([])
-        settings_widget.show()
+        self.label_title.setText(_("MENU_DEVICES"))
+        self.set_taskbar_buttons(self.devices_widget.get_taskbar_buttons())
+        self.devices_widget.show()
 
     def set_taskbar_buttons(self, buttons):
         while self.widget_taskbar.layout().count() != 0:
             item = self.widget_taskbar.layout().takeAt(0)
             if item:
                 w = item.widget()
-                self.widget_taskbar.layout().removeWidget(w)
+                w.hide()
                 w.setParent(None)
         buttons.append(self.button_notif)
         total_width = 0
@@ -237,12 +249,11 @@ class CentralWidget(QWidget, Ui_CentralWidget):
             self.widget_taskbar.show()
             for b in buttons:
                 self.widget_taskbar.layout().addWidget(b)
+                b.show()
                 total_width += b.size().width()
             self.widget_taskbar.setFixedSize(QSize(total_width + 44, 68))
 
     def clear_widgets(self):
-        item = self.widget_central.layout().takeAt(0)
-        if item:
-            item.widget().disconnect_all()
-            item.widget().hide()
-            item.widget().setParent(None)
+        self.users_widget.hide()
+        self.mount_widget.hide()
+        self.devices_widget.hide()

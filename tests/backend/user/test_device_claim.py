@@ -1,11 +1,15 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
 import pytest
+import trio
 from pendulum import Pendulum
 from async_generator import asynccontextmanager
 
-from parsec.types import DeviceID
-from parsec.api.protocole import device_get_invitation_creator_serializer, device_claim_serializer
+from parsec.api.protocol import (
+    DeviceID,
+    device_get_invitation_creator_serializer,
+    device_claim_serializer,
+)
 from parsec.backend.user import Device, DeviceInvitation, PEER_EVENT_MAX_WAIT
 
 from tests.common import freeze_time
@@ -42,7 +46,20 @@ async def device_claim(sock, **kwargs):
 
 
 @pytest.mark.trio
-async def test_device_claim_ok(backend, anonymous_backend_sock, alice, alice_nd_invitation):
+async def test_device_claim_ok(
+    monkeypatch, backend, anonymous_backend_sock, alice, alice_nd_invitation
+):
+    device_invitation_retreived = trio.Event()
+
+    vanilla_claim_device_invitation = backend.user.claim_device_invitation
+
+    async def _mocked_claim_device_invitation(*args, **kwargs):
+        ret = await vanilla_claim_device_invitation(*args, **kwargs)
+        device_invitation_retreived.set()
+        return ret
+
+    monkeypatch.setattr(backend.user, "claim_device_invitation", _mocked_claim_device_invitation)
+
     with freeze_time(alice_nd_invitation.created_on):
         async with device_claim(
             anonymous_backend_sock,
@@ -50,38 +67,50 @@ async def test_device_claim_ok(backend, anonymous_backend_sock, alice, alice_nd_
             encrypted_claim=b"<foo>",
         ) as prep:
 
-            await backend.event_bus.spy.wait(
-                "event.connected", kwargs={"event_name": "device.created"}
+            # `backend.user.create_device` will destroy the device invitation,
+            # so make sure we retreived it before
+            await device_invitation_retreived.wait()
+
+            # No the device we are waiting for
+            await backend.user.create_device(
+                alice.organization_id,
+                Device(
+                    device_id=DeviceID(f"{alice.user_id}@dummy"),
+                    device_certificate=b"<alice@dummy certificate>",
+                    device_certifier=alice.device_id,
+                ),
+                encrypted_answer=b"<alice@dummy answer>",
             )
-            backend.event_bus.send(
-                "device.created",
-                organization_id=alice.organization_id,
-                device_id="dummy@foo",
-                encrypted_answer=b"<dummy>",
+
+            await backend.user.create_device(
+                alice.organization_id,
+                Device(
+                    device_id=alice_nd_invitation.device_id,
+                    device_certificate=b"<alice@new_device certificate>",
+                    device_certifier=alice.device_id,
+                ),
+                encrypted_answer=b"<alice@new_device answer>",
             )
-            backend.event_bus.send(
-                "device.created",
-                organization_id=alice.organization_id,
-                device_id=alice_nd_invitation.device_id,
-                encrypted_answer=b"<good>",
-            )
-    assert prep[0] == {"status": "ok", "encrypted_answer": b"<good>"}
+
+    assert prep[0] == {
+        "status": "ok",
+        "encrypted_answer": b"<alice@new_device answer>",
+        "device_certificate": b"<alice@new_device certificate>",
+    }
 
 
 @pytest.mark.trio
 async def test_device_claim_timeout(
     mock_clock, backend, anonymous_backend_sock, alice_nd_invitation
 ):
-    with freeze_time(alice_nd_invitation.created_on):
+    with freeze_time(alice_nd_invitation.created_on), backend.event_bus.listen() as spy:
         async with device_claim(
             anonymous_backend_sock,
             invited_device_id=alice_nd_invitation.device_id,
             encrypted_claim=b"<foo>",
         ) as prep:
 
-            await backend.event_bus.spy.wait(
-                "event.connected", kwargs={"event_name": "device.created"}
-            )
+            await spy.wait_with_timeout("event.connected", {"event_name": "device.created"})
             mock_clock.jump(PEER_EVENT_MAX_WAIT + 1)
 
     assert prep[0] == {
@@ -92,18 +121,22 @@ async def test_device_claim_timeout(
 
 @pytest.mark.trio
 async def test_device_claim_denied(backend, anonymous_backend_sock, alice, alice_nd_invitation):
-    with freeze_time(alice_nd_invitation.created_on):
+    with freeze_time(alice_nd_invitation.created_on), backend.event_bus.listen() as spy:
         async with device_claim(
             anonymous_backend_sock,
             invited_device_id=alice_nd_invitation.device_id,
             encrypted_claim=b"<foo>",
         ) as prep:
 
-            await backend.event_bus.spy.wait(
-                "event.connected", kwargs={"event_name": "device.invitation.cancelled"}
+            await spy.wait_with_timeout(
+                "event.connected", {"event_name": "device.invitation.cancelled"}
             )
             backend.event_bus.send(
-                "device.created", organization_id=alice.organization_id, device_id="dummy"
+                "device.created",
+                organization_id=alice.organization_id,
+                device_id="dummy@foo",
+                device_certificate=b"<dummy@foo certificate>",
+                encrypted_answer=b"<dummy>",
             )
             backend.event_bus.send(
                 "device.invitation.cancelled",

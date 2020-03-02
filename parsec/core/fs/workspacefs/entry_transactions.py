@@ -1,125 +1,102 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-import os
-import errno
-from uuid import UUID
-from typing import Tuple, Callable
-from collections import namedtuple
+from typing import Tuple
 from async_generator import asynccontextmanager
 
-from parsec.event_bus import EventBus
 from parsec.core.types import (
-    AccessID,
+    EntryID,
     FsPath,
-    Access,
     WorkspaceRole,
-    LocalDevice,
     LocalManifest,
-    ManifestAccess,
     LocalFileManifest,
     LocalFolderManifest,
     FileDescriptor,
 )
-from parsec.core.local_storage import LocalStorage, LocalStorageMissingEntry
-from parsec.core.fs.utils import (
-    is_file_manifest,
-    is_folder_manifest,
-    is_folderish_manifest,
-    is_workspace_manifest,
+
+
+from parsec.core.fs.workspacefs.file_transactions import FileTransactions
+from parsec.core.fs.utils import is_file_manifest, is_folder_manifest, is_folderish_manifest
+from parsec.core.fs.exceptions import (
+    FSPermissionError,
+    FSNoAccessError,
+    FSReadOnlyError,
+    FSNotADirectoryError,
+    FSFileNotFoundError,
+    FSCrossDeviceError,
+    FSFileExistsError,
+    FSIsADirectoryError,
+    FSDirectoryNotEmptyError,
+    FSLocalMissError,
 )
-from parsec.core.fs.remote_loader import RemoteLoader
 
 
-Entry = namedtuple("Entry", "access manifest")
 WRITE_RIGHT_ROLES = (WorkspaceRole.OWNER, WorkspaceRole.MANAGER, WorkspaceRole.CONTRIBUTOR)
 
 
-def from_errno(errno, message=None, filename=None, filename2=None):
-    if message is None:
-        message = os.strerror(errno)
-    return OSError(errno, message, filename, None, filename2)
-
-
-class EntryTransactions:
-    def __init__(
-        self,
-        workspace_id: UUID,
-        get_workspace_entry: Callable,
-        device: LocalDevice,
-        local_storage: LocalStorage,
-        remote_loader: RemoteLoader,
-        event_bus: EventBus,
-    ):
-        self.workspace_id = workspace_id
-        self.get_workspace_entry = get_workspace_entry
-        self.local_author = device.device_id
-        self.local_storage = local_storage
-        self.remote_loader = remote_loader
-        self.event_bus = event_bus
+class EntryTransactions(FileTransactions):
 
     # Right management helper
 
-    def _check_write_rights(self, path: FsPath):
+    def check_read_rights(self, path: FsPath):
+        if self.get_workspace_entry().role is None:
+            raise FSNoAccessError(filename=path)
+
+    def check_write_rights(self, path: FsPath):
+        self.check_read_rights(path)
         if self.get_workspace_entry().role not in WRITE_RIGHT_ROLES:
-            raise from_errno(errno.EACCES, str(path))
-
-    # Event helper
-
-    def _send_event(self, event, **kwargs):
-        self.event_bus.send(event, workspace_id=self.workspace_id, **kwargs)
+            raise FSReadOnlyError(filename=path)
 
     # Look-up helpers
 
-    async def _get_manifest(self, access: Access) -> LocalManifest:
+    async def _get_manifest(self, entry_id: EntryID) -> LocalManifest:
         try:
-            return self.local_storage.get_manifest(access)
-        except LocalStorageMissingEntry as exc:
-            return await self.remote_loader.load_manifest(exc.access)
+            return await self.local_storage.get_manifest(entry_id)
+        except FSLocalMissError as exc:
+            remote_manifest = await self.remote_loader.load_manifest(exc.id)
+            return LocalManifest.from_remote(remote_manifest)
 
-    async def _get_entry(self, path: FsPath) -> Tuple[Access, LocalManifest]:
-        # Root access and manifest
-        assert path.parts[0] == "/"
-        access = self.get_workspace_entry().access
-        manifest = await self._get_manifest(access)
-        assert is_workspace_manifest(manifest)
+    @asynccontextmanager
+    async def _load_and_lock_manifest(self, entry_id: EntryID):
+        async with self.local_storage.lock_entry_id(entry_id):
+            try:
+                local_manifest = await self.local_storage.get_manifest(entry_id)
+            except FSLocalMissError as exc:
+                remote_manifest = await self.remote_loader.load_manifest(exc.id)
+                local_manifest = LocalManifest.from_remote(remote_manifest)
+                await self.local_storage.set_manifest(entry_id, local_manifest)
+            yield local_manifest
+
+    async def _load_manifest(self, entry_id: EntryID) -> LocalManifest:
+        async with self._load_and_lock_manifest(entry_id) as manifest:
+            return manifest
+
+    @asynccontextmanager
+    async def _lock_manifest_from_path(self, path: FsPath) -> LocalManifest:
+        # Root entry_id and manifest
+        entry_id = self.workspace_id
 
         # Follow the path
-        for name in path.parts[1:]:
+        for name in path.parts:
+            manifest = await self._load_manifest(entry_id)
             if is_file_manifest(manifest):
-                raise from_errno(errno.ENOTDIR, filename=str(path))
+                raise FSNotADirectoryError(filename=path)
             try:
-                access = manifest.children[name]
+                entry_id = manifest.children[name]
             except (AttributeError, KeyError):
-                raise from_errno(errno.ENOENT, filename=str(path))
-            manifest = await self._get_manifest(access)
+                raise FSFileNotFoundError(filename=path)
 
-        # Return entry
-        return Entry(access, manifest)
+        # Lock entry
+        async with self._load_and_lock_manifest(entry_id) as manifest:
+            yield manifest
 
-    # Locking helpers
-
-    # This logic should move to the local storage along with
-    # the remote loader. It would then be up to the local storage
-    # to download the missing manifests. This should simplify the
-    # code and help gather all the sensitive methods in the same
-    # module.
+    async def _get_manifest_from_path(self, path: FsPath) -> LocalManifest:
+        async with self._lock_manifest_from_path(path) as manifest:
+            return manifest
 
     @asynccontextmanager
-    async def _lock_entry(self, path: FsPath):
-        # Load the entry
-        access, _ = await self._get_entry(path)
-
-        # Try to lock the corresponding access
-        try:
-            async with self.local_storage.lock_manifest(access) as manifest:
-                yield Entry(access, manifest)
-
-        # The entry has been deleted while we were waiting for the lock
-        except LocalStorageMissingEntry:
-            raise from_errno(errno.ENOENT, filename=str(path))
-
-    @asynccontextmanager
-    async def _lock_parent_entry(self, path):
+    async def _lock_parent_manifest_from_path(
+        self, path: FsPath
+    ) -> Tuple[LocalManifest, LocalManifest]:
         # This is the most complicated locking scenario.
         # It requires locking the parent of the given entry and the entry itself
         # if it exists.
@@ -140,53 +117,49 @@ class EntryTransactions:
 
         # Source is root
         if path.is_root():
-            raise from_errno(errno.EACCES, filename=str(path))
+            raise FSPermissionError(filename=str(path))
 
         # Loop over attempts
         while True:
 
             # Lock parent first
-            async with self._lock_entry(path.parent) as parent:
+            async with self._lock_manifest_from_path(path.parent) as parent:
 
                 # Parent is not a directory
-                if not is_folderish_manifest(parent.manifest):
-                    raise from_errno(errno.ENOTDIR, filename=str(path.parent))
+                if not is_folderish_manifest(parent):
+                    raise FSNotADirectoryError(filename=path.parent)
 
                 # Child doesn't exist
-                if path.name not in parent.manifest.children:
+                if path.name not in parent.children:
                     yield parent, None
                     return
 
                 # Child exists
-                access = parent.manifest.children[path.name]
+                entry_id = parent.children[path.name]
                 try:
-                    async with self.local_storage.lock_manifest(access) as manifest:
-                        yield parent, Entry(access, manifest)
+                    async with self.local_storage.lock_manifest(entry_id) as manifest:
+                        yield parent, manifest
                         return
 
                 # Child is not available
-                except LocalStorageMissingEntry as exc:
-                    assert exc.access == access
+                except FSLocalMissError as exc:
+                    assert exc.id == entry_id
 
             # Release the lock and download the child manifest
-            await self.remote_loader.load_manifest(access)
-
-    # Reverse lookup logic
-
-    async def _get_path(self, id: AccessID) -> FsPath:
-        # TODO
-        pass
+            await self._load_manifest(entry_id)
 
     # Transactions
 
     async def entry_info(self, path: FsPath) -> dict:
+        # Check read rights
+        self.check_read_rights(path)
 
         # Fetch data
-        access, manifest = await self._get_entry(path)
+        manifest = await self._get_manifest_from_path(path)
 
         # General stats
         stats = {
-            "id": access.id,
+            "id": manifest.id,
             "created": manifest.created,
             "updated": manifest.updated,
             "base_version": manifest.base_version,
@@ -206,33 +179,33 @@ class EntryTransactions:
 
     async def entry_rename(
         self, source: FsPath, destination: FsPath, overwrite: bool = True
-    ) -> AccessID:
+    ) -> EntryID:
         # Check write rights
-        self._check_write_rights(source)
+        self.check_write_rights(source)
 
         # Source is root
         if source.is_root():
-            raise from_errno(errno.EACCES, filename=str(source))
+            raise FSPermissionError(filename=source)
 
         # Destination is root
         if destination.is_root():
-            raise from_errno(errno.EACCES, filename=str(destination))
+            raise FSPermissionError(filename=destination)
 
         # Cross-directory renaming is not supported
         if source.parent != destination.parent:
-            raise from_errno(errno.EXDEV, filename=str(source), filename2=str(destination))
+            raise FSCrossDeviceError(filename=source, filename2=destination)
 
         # Pre-fetch the source if necessary
         if overwrite:
-            await self._get_entry(source)
+            await self._get_manifest_from_path(source)
 
         # Fetch and lock
-        async with self._lock_parent_entry(destination) as (parent, child):
+        async with self._lock_parent_manifest_from_path(destination) as (parent, child):
 
             # Source does not exist
-            if source.name not in parent.manifest.children:
-                raise from_errno(errno.ENOENT, filename=str(source))
-            source_access = parent.manifest.children[source.name]
+            if source.name not in parent.children:
+                raise FSFileNotFoundError(filename=source)
+            source_entry_id = parent.children[source.name]
 
             # Source and destination are the same
             if source.name == destination.name:
@@ -240,187 +213,189 @@ class EntryTransactions:
 
             # Destination already exists
             if not overwrite and child is not None:
-                raise from_errno(errno.EEXIST, filename=str(destination))
+                raise FSFileExistsError(filename=destination)
 
             # Overwrite logic
             if overwrite and child is not None:
-                source_manifest = await self._get_manifest(source_access)
+                source_manifest = await self._get_manifest(source_entry_id)
 
                 # Overwrite a file
                 if is_file_manifest(source_manifest):
 
                     # Destination is a folder
-                    if is_folder_manifest(child.manifest):
-                        raise from_errno(errno.EISDIR, str(destination))
+                    if is_folder_manifest(child):
+                        raise FSIsADirectoryError(filename=destination)
 
                 # Overwrite a folder
                 if is_folder_manifest(source_manifest):
 
                     # Destination is not a folder
-                    if is_file_manifest(child.manifest):
-                        raise from_errno(errno.ENOTDIR, str(destination))
+                    if is_file_manifest(child):
+                        raise FSNotADirectoryError(filename=destination)
 
                     # Destination is not empty
-                    if child.manifest.children:
-                        raise from_errno(errno.ENOTEMPTY, str(destination))
+                    if child.children:
+                        raise FSDirectoryNotEmptyError(filename=destination)
 
             # Create new manifest
-            new_parent_manifest = parent.manifest.evolve_children_and_mark_updated(
-                {destination.name: source_access, source.name: None}
+            new_parent = parent.evolve_children_and_mark_updated(
+                {destination.name: source_entry_id, source.name: None}
             )
 
             # Atomic change
-            self.local_storage.set_manifest(parent.access, new_parent_manifest)
+            await self.local_storage.set_manifest(parent.id, new_parent)
 
         # Send event
-        self._send_event("fs.entry.updated", id=parent.access.id)
+        self._send_event("fs.entry.updated", id=parent.id)
 
-        # Return the access id of the renamed entry
-        return parent.manifest.children[source.name].id
+        # Return the entry id of the renamed entry
+        return parent.children[source.name]
 
-    async def folder_delete(self, path: FsPath) -> AccessID:
+    async def folder_delete(self, path: FsPath) -> EntryID:
         # Check write rights
-        self._check_write_rights(path)
+        self.check_write_rights(path)
 
         # Fetch and lock
-        async with self._lock_parent_entry(path) as (parent, child):
+        async with self._lock_parent_manifest_from_path(path) as (parent, child):
 
             # Entry doesn't exist
             if child is None:
-                raise from_errno(errno.ENOENT, filename=str(path))
+                raise FSFileNotFoundError(filename=path)
 
             # Not a directory
-            if not is_folderish_manifest(child.manifest):
-                raise from_errno(errno.ENOTDIR, str(path))
+            if not is_folderish_manifest(child):
+                raise FSNotADirectoryError(filename=path)
 
             # Directory not empty
-            if child.manifest.children:
-                raise from_errno(errno.ENOTEMPTY, str(path))
+            if child.children:
+                raise FSDirectoryNotEmptyError(filename=path)
 
             # Create new manifest
-            new_parent_manifest = parent.manifest.evolve_children_and_mark_updated(
-                {path.name: None}
-            )
+            new_parent = parent.evolve_children_and_mark_updated({path.name: None})
 
             # Atomic change
-            self.local_storage.set_manifest(parent.access, new_parent_manifest)
-
-            # Clean up
-            # TODO: actually we can't do that: this child my require synchronization
-            self.local_storage.clear_manifest(child.access)
+            await self.local_storage.set_manifest(parent.id, new_parent)
 
         # Send event
-        self._send_event("fs.entry.updated", id=parent.access.id)
+        self._send_event("fs.entry.updated", id=parent.id)
 
-        # Return the access id of the removed folder
-        return child.access.id
+        # Return the entry id of the removed folder
+        return child.id
 
-    async def file_delete(self, path: FsPath) -> AccessID:
+    async def file_delete(self, path: FsPath) -> EntryID:
         # Check write rights
-        self._check_write_rights(path)
+        self.check_write_rights(path)
 
         # Fetch and lock
-        async with self._lock_parent_entry(path) as (parent, child):
+        async with self._lock_parent_manifest_from_path(path) as (parent, child):
 
             # Entry doesn't exist
             if child is None:
-                raise from_errno(errno.ENOENT, filename=str(path))
+                raise FSFileNotFoundError(filename=path)
 
             # Not a file
-            if not is_file_manifest(child.manifest):
-                raise from_errno(errno.EISDIR, str(path))
+            if not is_file_manifest(child):
+                raise FSIsADirectoryError(filename=path)
 
             # Create new manifest
-            new_parent_manifest = parent.manifest.evolve_children_and_mark_updated(
-                {path.name: None}
-            )
+            new_parent = parent.evolve_children_and_mark_updated({path.name: None})
 
             # Atomic change
-            self.local_storage.set_manifest(parent.access, new_parent_manifest)
-
-            # Clean up
-            self.local_storage.remove_file_reference(child.access, child.manifest)
+            await self.local_storage.set_manifest(parent.id, new_parent)
 
         # Send event
-        self._send_event("fs.entry.updated", id=parent.access.id)
+        self._send_event("fs.entry.updated", id=parent.id)
 
-        # Return the access id of the deleted file
-        return child.access.id
+        # Return the entry id of the deleted file
+        return child.id
 
-    async def folder_create(self, path: FsPath) -> AccessID:
+    async def folder_create(self, path: FsPath) -> EntryID:
         # Check write rights
-        self._check_write_rights(path)
+        self.check_write_rights(path)
 
         # Lock parent and child
-        async with self._lock_parent_entry(path) as (parent, child):
+        async with self._lock_parent_manifest_from_path(path) as (parent, child):
 
             # Destination already exists
             if child is not None:
-                raise from_errno(errno.EEXIST, filename=str(path))
+                raise FSFileExistsError(filename=path)
 
             # Create folder
-            child_access = ManifestAccess()
-            child_manifest = LocalFolderManifest(self.local_author)
+            child = LocalFolderManifest.new_placeholder(parent=parent.id)
 
             # New parent manifest
-            new_parent_manifest = parent.manifest.evolve_children_and_mark_updated(
-                {path.name: child_access}
-            )
+            new_parent = parent.evolve_children_and_mark_updated({path.name: child.id})
 
             # ~ Atomic change
-            self.local_storage.set_manifest(child_access, child_manifest)
-            self.local_storage.set_manifest(parent.access, new_parent_manifest)
+            await self.local_storage.set_manifest(child.id, child, check_lock_status=False)
+            await self.local_storage.set_manifest(parent.id, new_parent)
 
         # Send events
-        self._send_event("fs.entry.updated", id=parent.access.id)
-        self._send_event("fs.entry.updated", id=child_access.id)
+        self._send_event("fs.entry.updated", id=parent.id)
+        self._send_event("fs.entry.updated", id=child.id)
 
-        # Return the access id of the created folder
-        return child_access.id
+        # Return the entry id of the created folder
+        return child.id
 
-    async def file_create(self, path: FsPath, open=True) -> Tuple[AccessID, FileDescriptor]:
+    async def file_create(self, path: FsPath, open=True) -> Tuple[EntryID, FileDescriptor]:
         # Check write rights
-        self._check_write_rights(path)
+        self.check_write_rights(path)
 
         # Lock parent in write mode
-        async with self._lock_parent_entry(path) as (parent, child):
+        async with self._lock_parent_manifest_from_path(path) as (parent, child):
 
             # Destination already exists
             if child is not None:
-                raise from_errno(errno.EEXIST, filename=str(path))
+                raise FSFileExistsError(filename=path)
 
             # Create file
-            child_access = ManifestAccess()
-            child_manifest = LocalFileManifest(self.local_author)
+            child = LocalFileManifest.new_placeholder(parent=parent.id)
 
             # New parent manifest
-            new_parent_manifest = parent.manifest.evolve_children_and_mark_updated(
-                {path.name: child_access}
-            )
+            new_parent = parent.evolve_children_and_mark_updated({path.name: child.id})
 
             # ~ Atomic change
-            self.local_storage.set_manifest(child_access, child_manifest)
-            self.local_storage.set_manifest(parent.access, new_parent_manifest)
-            fd = self.local_storage.create_cursor(child_access) if open else None
+            await self.local_storage.set_manifest(child.id, child, check_lock_status=False)
+            await self.local_storage.set_manifest(parent.id, new_parent)
+            fd = self.local_storage.create_file_descriptor(child) if open else None
 
         # Send events
-        self._send_event("fs.entry.updated", id=parent.access.id)
-        self._send_event("fs.entry.updated", id=child_access.id)
+        self._send_event("fs.entry.updated", id=parent.id)
+        self._send_event("fs.entry.updated", id=child.id)
 
-        # Return the access id of the created file and the file descriptor
-        return child_access.id, fd
+        # Return the entry id of the created file and the file descriptor
+        return child.id, fd
 
-    async def file_open(self, path: FsPath, mode="rw") -> Tuple[AccessID, FileDescriptor]:
-        # Check write rights
+    async def file_open(self, path: FsPath, mode="rw") -> Tuple[EntryID, FileDescriptor]:
+        # Check read and write rights
         if "w" in mode:
-            self._check_write_rights(path)
+            self.check_write_rights(path)
+        else:
+            self.check_read_rights(path)
 
         # Lock path in read mode
-        async with self._lock_entry(path) as entry:
+        async with self._lock_manifest_from_path(path) as manifest:
 
             # Not a file
-            if not is_file_manifest(entry.manifest):
-                raise from_errno(errno.EISDIR, str(path))
+            if not is_file_manifest(manifest):
+                raise FSIsADirectoryError(filename=path)
 
-            # Return the access id of the open file and the file descriptor
-            return entry.access.id, self.local_storage.create_cursor(entry.access)
+            # Return the entry id of the open file and the file descriptor
+            return manifest.id, self.local_storage.create_file_descriptor(manifest)
+
+    async def file_resize(self, path: FsPath, length: int) -> EntryID:
+        # Check write rights
+        self.check_write_rights(path)
+
+        # Lock manifest
+        async with self._lock_manifest_from_path(path) as manifest:
+
+            # Not a file
+            if not is_file_manifest(manifest):
+                raise FSIsADirectoryError(filename=path)
+
+            # Perform resize
+            await self._manifest_resize(manifest, length)
+
+            # Return entry id
+            return manifest.id

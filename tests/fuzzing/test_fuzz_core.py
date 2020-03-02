@@ -220,7 +220,8 @@ async def _fuzzer_cmd(id, core, workspace, fs_state):
     elif x < 90:
         path = fs_state.get_path()
         try:
-            await core.fs.sync(path)
+            entry_id = await workspace.path_id(path)
+            await workspace.sync_by_id(entry_id)
             fs_state.add_stat(id, "sync_ok", f"path={path}")
         except OSError as exc:
             fs_state.add_stat(id, "sync_bad", f"path={path}, raised {exc!r}")
@@ -236,12 +237,12 @@ async def _fuzzer_cmd(id, core, workspace, fs_state):
 
 @pytest.mark.trio
 @pytest.mark.slow
-async def test_fuzz_core(running_backend, alice_core):
+async def test_fuzz_core(request, running_backend, alice_core):
     await trio.sleep(0.1)  # Somehow fixes the test
     wid = await alice_core.user_fs.workspace_create("w")
     workspace = alice_core.user_fs.get_workspace(wid)
     try:
-        async with trio.open_nursery() as nursery:
+        async with trio.open_service_nursery() as nursery:
             fs_state = FSState()
             for i in range(FUZZ_PARALLELISM):
                 nursery.start_soon(fuzzer, i, alice_core, workspace, fs_state)

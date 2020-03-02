@@ -5,19 +5,19 @@ import attr
 from typing import List, Optional, Tuple
 import pendulum
 
-from parsec.types import UserID, DeviceID, OrganizationID
-from parsec.crypto import (
-    CryptoError,
-    VerifyKey,
-    PublicKey,
-    verify_user_certificate,
-    verify_device_certificate,
-    verify_revoked_device_certificate,
-    unsecure_read_device_certificate,
-    unsecure_read_user_certificate,
-    timestamps_in_the_ballpark,
+from parsec.utils import timestamps_in_the_ballpark
+from parsec.crypto import VerifyKey, PublicKey
+from parsec.event_bus import EventBus
+from parsec.api.data import (
+    UserCertificateContent,
+    DeviceCertificateContent,
+    RevokedUserCertificateContent,
+    DataError,
 )
-from parsec.api.protocole import (
+from parsec.api.protocol import (
+    OrganizationID,
+    UserID,
+    DeviceID,
     user_get_serializer,
     user_find_serializer,
     user_get_invitation_creator_serializer,
@@ -25,14 +25,14 @@ from parsec.api.protocole import (
     user_claim_serializer,
     user_cancel_invitation_serializer,
     user_create_serializer,
+    user_revoke_serializer,
     device_get_invitation_creator_serializer,
     device_invite_serializer,
     device_claim_serializer,
     device_cancel_invitation_serializer,
     device_create_serializer,
-    device_revoke_serializer,
 )
-from parsec.backend.utils import anonymous_api, catch_protocole_errors
+from parsec.backend.utils import anonymous_api, catch_protocol_errors, run_with_breathing_transport
 
 
 class UserError(Exception):
@@ -73,16 +73,12 @@ class Device:
 
     @property
     def verify_key(self) -> VerifyKey:
-        return unsecure_read_device_certificate(self.device_certificate).verify_key
+        return DeviceCertificateContent.unsecure_load(self.device_certificate).verify_key
 
     device_id: DeviceID
     device_certificate: bytes
     device_certifier: Optional[DeviceID]
-
     created_on: pendulum.Pendulum = attr.ib(factory=pendulum.now)
-    revoked_on: pendulum.Pendulum = None
-    revoked_device_certificate: bytes = None
-    revoked_device_certifier: DeviceID = None
 
 
 @attr.s(slots=True, frozen=True, repr=False, auto_attribs=True)
@@ -95,29 +91,23 @@ class User:
 
     @property
     def public_key(self) -> PublicKey:
-        return unsecure_read_user_certificate(self.user_certificate).public_key
+        return UserCertificateContent.unsecure_load(self.user_certificate).public_key
 
     user_id: UserID
     user_certificate: bytes
     user_certifier: Optional[DeviceID]
     is_admin: bool = False
     created_on: pendulum.Pendulum = attr.ib(factory=pendulum.now)
+    revoked_on: pendulum.Pendulum = None
+    revoked_user_certificate: bytes = None
+    revoked_user_certifier: DeviceID = None
 
 
-def user_is_revoked(devices: List[Device]) -> bool:
-    now = pendulum.now()
-    for d in devices:
-        if not d.revoked_on or d.revoked_on > now:
-            return False
-    return True
-
-
-def user_get_revoked_on(devices: List[Device]) -> Optional[pendulum.Pendulum]:
-    revocations = [d.revoked_on for d in devices]
-    if not revocations or None in revocations:
-        return None
-    else:
-        return sorted(revocations)[-1]
+@attr.s(slots=True, frozen=True, auto_attribs=True)
+class Trustchain:
+    users: Tuple[bytes, ...]
+    revoked_users: Tuple[bytes, ...]
+    devices: Tuple[bytes, ...]
 
 
 def new_user_factory(
@@ -176,9 +166,12 @@ class DeviceInvitation:
 
 
 class BaseUserComponent:
+    def __init__(self, event_bus: EventBus):
+        self._event_bus = event_bus
+
     #### Access user API ####
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_user_get(self, client_ctx, msg):
         msg = user_get_serializer.req_load(msg)
 
@@ -192,15 +185,18 @@ class BaseUserComponent:
         return user_get_serializer.rep_dump(
             {
                 "status": "ok",
-                "user_id": user.user_id,
-                "is_admin": user.is_admin,
                 "user_certificate": user.user_certificate,
-                "devices": devices,
-                "trustchain": trustchain,
+                "revoked_user_certificate": user.revoked_user_certificate,
+                "device_certificates": [device.device_certificate for device in devices],
+                "trustchain": {
+                    "devices": trustchain.devices,
+                    "users": trustchain.users,
+                    "revoked_users": trustchain.revoked_users,
+                },
             }
         )
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_user_find(self, client_ctx, msg):
         msg = user_find_serializer.req_load(msg)
         results, total = await self.find(client_ctx.organization_id, **msg)
@@ -216,52 +212,52 @@ class BaseUserComponent:
 
     #### User creation API ####
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_user_invite(self, client_ctx, msg):
-        # is_admin could have changed in db since the creation of the connection
-        try:
-            user = await self.get_user(client_ctx.organization_id, client_ctx.device_id.user_id)
-
-        except UserNotFoundError:
-            raise RuntimeError("User `{client_ctx.device_id.user_id}` disappeared !")
-
-        if not user.is_admin:
+        if not client_ctx.is_admin:
             return {
-                "status": "invalid_role",
+                "status": "not_allowed",
                 "reason": f"User `{client_ctx.device_id.user_id}` is not admin",
             }
 
         msg = user_invite_serializer.req_load(msg)
 
+        # Setting the cancel scope here instead of just were we are waiting
+        # for the event make testing easier.
+        with trio.move_on_after(PEER_EVENT_MAX_WAIT) as cancel_scope:
+            rep = await run_with_breathing_transport(
+                client_ctx.transport, self._api_user_invite, client_ctx, msg
+            )
+
+        if cancel_scope.cancelled_caught:
+            rep = {
+                "status": "timeout",
+                "reason": "Timeout while waiting for new user to be claimed.",
+            }
+
+        return user_invite_serializer.rep_dump(rep)
+
+    async def _api_user_invite(self, client_ctx, msg):
         invitation = UserInvitation(msg["user_id"], client_ctx.device_id)
-        try:
-            await self.create_user_invitation(client_ctx.organization_id, invitation)
-
-        except UserAlreadyExistsError as exc:
-            return {"status": "already_exists", "reason": str(exc)}
-
-        # Wait for invited user to send `user_claim`
 
         def _filter_on_user_claimed(event, organization_id, user_id, encrypted_claim):
             return organization_id == client_ctx.organization_id and user_id == invitation.user_id
 
-        with self.event_bus.waiter_on("user.claimed", filter=_filter_on_user_claimed) as waiter:
-            with trio.move_on_after(PEER_EVENT_MAX_WAIT) as cancel_scope:
-                _, event_data = await waiter.wait()
+        with self._event_bus.waiter_on("user.claimed", filter=_filter_on_user_claimed) as waiter:
 
-        if cancel_scope.cancelled_caught:
-            return {
-                "status": "timeout",
-                "reason": ("Timeout while waiting for new user to be claimed."),
-            }
+            try:
+                await self.create_user_invitation(client_ctx.organization_id, invitation)
 
-        else:
-            return user_invite_serializer.rep_dump(
-                {"status": "ok", "encrypted_claim": event_data["encrypted_claim"]}
-            )
+            except UserAlreadyExistsError as exc:
+                return {"status": "already_exists", "reason": str(exc)}
+
+            # Wait for invited user to send `user_claim`
+            _, event_data = await waiter.wait()
+
+        return {"status": "ok", "encrypted_claim": event_data["encrypted_claim"]}
 
     @anonymous_api
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_user_get_invitation_creator(self, client_ctx, msg):
         msg = user_get_invitation_creator_serializer.req_load(msg)
 
@@ -272,8 +268,8 @@ class BaseUserComponent:
             if not invitation.is_valid():
                 return {"status": "not_found"}
 
-            user, trustchain = await self.get_user_with_trustchain(
-                client_ctx.organization_id, invitation.creator.user_id
+            creator_user, creator_device, trustchain = await self.get_user_with_device_and_trustchain(
+                client_ctx.organization_id, invitation.creator
             )
 
         except UserNotFoundError:
@@ -282,21 +278,27 @@ class BaseUserComponent:
         return user_get_invitation_creator_serializer.rep_dump(
             {
                 "status": "ok",
-                "user_id": user.user_id,
-                "user_certificate": user.user_certificate,
-                "trustchain": trustchain,
+                "device_certificate": creator_device.device_certificate,
+                "user_certificate": creator_user.user_certificate,
+                "trustchain": {
+                    "devices": trustchain.devices,
+                    "users": trustchain.users,
+                    "revoked_users": trustchain.revoked_users,
+                },
             }
         )
 
     @anonymous_api
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_user_claim(self, client_ctx, msg):
         msg = user_claim_serializer.req_load(msg)
 
         # Setting the cancel scope here instead of just were we are waiting
         # for the event make testing easier.
         with trio.move_on_after(PEER_EVENT_MAX_WAIT) as cancel_scope:
-            rep = await self._api_user_claim(client_ctx, msg)
+            rep = await run_with_breathing_transport(
+                client_ctx.transport, self._api_user_claim, client_ctx, msg
+            )
 
         if cancel_scope.cancelled_caught:
             rep = {
@@ -315,11 +317,20 @@ class BaseUserComponent:
 
         send_channel, recv_channel = trio.open_memory_channel(1000)
 
-        def _on_organization_events(event, organization_id, user_id, first_device_id=None):
+        def _on_organization_events(
+            event,
+            organization_id,
+            user_id,
+            first_device_id=None,
+            user_certificate=None,
+            first_device_certificate=None,
+        ):
             if organization_id == client_ctx.organization_id:
-                send_channel.send_nowait((event, user_id))
+                send_channel.send_nowait(
+                    (event, user_id, first_device_id, user_certificate, first_device_certificate)
+                )
 
-        with self.event_bus.connect_in_context(
+        with self._event_bus.connect_in_context(
             ("user.created", _on_organization_events),
             ("user.invitation.cancelled", _on_organization_events),
         ):
@@ -337,7 +348,7 @@ class BaseUserComponent:
                 return {"status": "not_found"}
 
             # Wait for creator user to accept (or refuse) our claim
-            async for event, user_id in recv_channel:
+            async for event, user_id, first_device_id, user_certificate, first_device_certificate in recv_channel:
                 if user_id == invitation.user_id:
                     replied_ok = event == "user.created"
                     break
@@ -346,42 +357,62 @@ class BaseUserComponent:
             return {"status": "denied", "reason": "Invitation creator rejected us."}
 
         else:
-            return {"status": "ok"}
+            return {
+                "status": "ok",
+                "user_certificate": user_certificate,
+                "device_certificate": first_device_certificate,
+            }
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_user_cancel_invitation(self, client_ctx, msg):
+        if not client_ctx.is_admin:
+            return {
+                "status": "not_allowed",
+                "reason": f"User `{client_ctx.device_id.user_id}` is not admin",
+            }
+
         msg = user_cancel_invitation_serializer.req_load(msg)
 
         await self.cancel_user_invitation(client_ctx.organization_id, msg["user_id"])
 
         return user_cancel_invitation_serializer.rep_dump({"status": "ok"})
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_user_create(self, client_ctx, msg):
+        if not client_ctx.is_admin:
+            return {
+                "status": "not_allowed",
+                "reason": f"User `{client_ctx.device_id.user_id}` is not admin",
+            }
+
         msg = user_create_serializer.req_load(msg)
 
         try:
-            d_data = verify_device_certificate(
-                msg["device_certificate"], client_ctx.device_id, client_ctx.verify_key
+            d_data = DeviceCertificateContent.verify_and_load(
+                msg["device_certificate"],
+                author_verify_key=client_ctx.verify_key,
+                expected_author=client_ctx.device_id,
             )
-            u_data = verify_user_certificate(
-                msg["user_certificate"], client_ctx.device_id, client_ctx.verify_key
+            u_data = UserCertificateContent.verify_and_load(
+                msg["user_certificate"],
+                author_verify_key=client_ctx.verify_key,
+                expected_author=client_ctx.device_id,
             )
 
-        except CryptoError as exc:
+        except DataError as exc:
             return {
                 "status": "invalid_certification",
                 "reason": f"Invalid certification data ({exc}).",
             }
 
-        if u_data.certified_on != d_data.certified_on:
+        if u_data.timestamp != d_data.timestamp:
             return {
                 "status": "invalid_data",
                 "reason": "Device and User certifications must have the same timestamp.",
             }
 
         now = pendulum.now()
-        if not timestamps_in_the_ballpark(u_data.certified_on, now):
+        if not timestamps_in_the_ballpark(u_data.timestamp, now):
             return {
                 "status": "invalid_certification",
                 "reason": f"Invalid timestamp in certification.",
@@ -396,16 +427,16 @@ class BaseUserComponent:
         try:
             user = User(
                 user_id=u_data.user_id,
-                is_admin=msg["is_admin"],
+                is_admin=u_data.is_admin,
                 user_certificate=msg["user_certificate"],
-                user_certifier=u_data.certified_by,
-                created_on=u_data.certified_on,
+                user_certifier=u_data.author,
+                created_on=u_data.timestamp,
             )
             first_devices = Device(
                 device_id=d_data.device_id,
                 device_certificate=msg["device_certificate"],
-                device_certifier=d_data.certified_by,
-                created_on=d_data.certified_on,
+                device_certifier=d_data.author,
+                created_on=d_data.timestamp,
             )
             await self.create_user(client_ctx.organization_id, user, first_devices)
 
@@ -414,44 +445,100 @@ class BaseUserComponent:
 
         return user_create_serializer.rep_dump({"status": "ok"})
 
+    @catch_protocol_errors
+    async def api_user_revoke(self, client_ctx, msg):
+        if not client_ctx.is_admin:
+            return {
+                "status": "not_allowed",
+                "reason": f"User `{client_ctx.device_id.user_id}` is not admin",
+            }
+
+        msg = user_revoke_serializer.req_load(msg)
+
+        try:
+            data = RevokedUserCertificateContent.verify_and_load(
+                msg["revoked_user_certificate"],
+                author_verify_key=client_ctx.verify_key,
+                expected_author=client_ctx.device_id,
+            )
+
+        except DataError as exc:
+            return {
+                "status": "invalid_certification",
+                "reason": f"Invalid certification data ({exc}).",
+            }
+
+        if not timestamps_in_the_ballpark(data.timestamp, pendulum.now()):
+            return {
+                "status": "invalid_certification",
+                "reason": f"Invalid timestamp in certification.",
+            }
+
+        if data.user_id == client_ctx.user_id:
+            return {"status": "not_allowed", "reason": "Cannot do self-revocation"}
+
+        try:
+            await self.revoke_user(
+                organization_id=client_ctx.organization_id,
+                user_id=data.user_id,
+                revoked_user_certificate=msg["revoked_user_certificate"],
+                revoked_user_certifier=data.author,
+                revoked_on=data.timestamp,
+            )
+
+        except UserNotFoundError:
+            return {"status": "not_found"}
+
+        except UserAlreadyRevokedError:
+            return {"status": "already_revoked", "reason": f"User `{data.user_id}` already revoked"}
+
+        return user_revoke_serializer.rep_dump({"status": "ok"})
+
     #### Device creation API ####
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_device_invite(self, client_ctx, msg):
         msg = device_invite_serializer.req_load(msg)
 
-        invited_device_id = DeviceID(f"{client_ctx.device_id.user_id}@{msg['invited_device_name']}")
-        invitation = DeviceInvitation(invited_device_id, client_ctx.device_id)
-        try:
-            await self.create_device_invitation(client_ctx.organization_id, invitation)
-
-        except UserAlreadyExistsError as exc:
-            return {"status": "already_exists", "reason": str(exc)}
-
-        # Wait for invited user to send `user_claim`
-
-        def _filter_on_device_claimed(event, organization_id, device_id, encrypted_claim):
-            return (
-                organization_id == client_ctx.organization_id and device_id == invitation.device_id
+        # Setting the cancel scope here instead of just were we are waiting
+        # for the event make testing easier.
+        with trio.move_on_after(PEER_EVENT_MAX_WAIT) as cancel_scope:
+            rep = await run_with_breathing_transport(
+                client_ctx.transport, self._api_device_invite, client_ctx, msg
             )
-
-        with self.event_bus.waiter_on("device.claimed", filter=_filter_on_device_claimed) as waiter:
-            with trio.move_on_after(PEER_EVENT_MAX_WAIT) as cancel_scope:
-                _, event_data = await waiter.wait()
 
         if cancel_scope.cancelled_caught:
-            return {
+            rep = {
                 "status": "timeout",
-                "reason": ("Timeout while waiting for new device to be claimed."),
+                "reason": "Timeout while waiting for new device to be claimed.",
             }
 
-        else:
-            return device_invite_serializer.rep_dump(
-                {"status": "ok", "encrypted_claim": event_data["encrypted_claim"]}
-            )
+        return device_invite_serializer.rep_dump(rep)
+
+    async def _api_device_invite(self, client_ctx, msg):
+        invited_device_id = DeviceID(f"{client_ctx.device_id.user_id}@{msg['invited_device_name']}")
+        invitation = DeviceInvitation(invited_device_id, client_ctx.device_id)
+
+        def _filter_on_device_claimed(event, organization_id, device_id, encrypted_claim):
+            return organization_id == client_ctx.organization_id and device_id == invited_device_id
+
+        with self._event_bus.waiter_on(
+            "device.claimed", filter=_filter_on_device_claimed
+        ) as waiter:
+
+            try:
+                await self.create_device_invitation(client_ctx.organization_id, invitation)
+
+            except UserAlreadyExistsError as exc:
+                return {"status": "already_exists", "reason": str(exc)}
+
+            # Wait for invited user to send `user_claim`
+            _, event_data = await waiter.wait()
+
+        return {"status": "ok", "encrypted_claim": event_data["encrypted_claim"]}
 
     @anonymous_api
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_device_get_invitation_creator(self, client_ctx, msg):
         msg = device_get_invitation_creator_serializer.req_load(msg)
 
@@ -462,8 +549,8 @@ class BaseUserComponent:
             if not invitation.is_valid():
                 return {"status": "not_found"}
 
-            user, trustchain = await self.get_user_with_trustchain(
-                client_ctx.organization_id, invitation.creator.user_id
+            creator_user, creator_device, trustchain = await self.get_user_with_device_and_trustchain(
+                client_ctx.organization_id, invitation.creator
             )
 
         except UserNotFoundError:
@@ -472,21 +559,27 @@ class BaseUserComponent:
         return device_get_invitation_creator_serializer.rep_dump(
             {
                 "status": "ok",
-                "user_id": user.user_id,
-                "user_certificate": user.user_certificate,
-                "trustchain": trustchain,
+                "device_certificate": creator_device.device_certificate,
+                "user_certificate": creator_user.user_certificate,
+                "trustchain": {
+                    "devices": trustchain.devices,
+                    "users": trustchain.users,
+                    "revoked_users": trustchain.revoked_users,
+                },
             }
         )
 
     @anonymous_api
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_device_claim(self, client_ctx, msg):
         msg = device_claim_serializer.req_load(msg)
 
         # Setting the cancel scope here instead of just were we are waiting
         # for the event make testing easier.
         with trio.move_on_after(PEER_EVENT_MAX_WAIT) as cancel_scope:
-            rep = await self._api_device_claim(client_ctx, msg)
+            rep = await run_with_breathing_transport(
+                client_ctx.transport, self._api_device_claim, client_ctx, msg
+            )
 
         if cancel_scope.cancelled_caught:
             rep = {
@@ -505,11 +598,13 @@ class BaseUserComponent:
 
         send_channel, recv_channel = trio.open_memory_channel(1000)
 
-        def _on_organization_events(event, organization_id, device_id, encrypted_answer=None):
+        def _on_organization_events(
+            event, organization_id, device_id, device_certificate=None, encrypted_answer=None
+        ):
             if organization_id == client_ctx.organization_id:
-                send_channel.send_nowait((event, device_id, encrypted_answer))
+                send_channel.send_nowait((event, device_id, device_certificate, encrypted_answer))
 
-        with self.event_bus.connect_in_context(
+        with self._event_bus.connect_in_context(
             ("device.created", _on_organization_events),
             ("device.invitation.cancelled", _on_organization_events),
         ):
@@ -527,7 +622,7 @@ class BaseUserComponent:
                 return {"status": "not_found"}
 
             # Wait for creator device to accept (or refuse) our claim
-            async for event, device_id, encrypted_answer in recv_channel:
+            async for event, device_id, device_certificate, encrypted_answer in recv_channel:
                 if device_id == invitation.device_id:
                     replied_ok = event == "device.created"
                     break
@@ -537,10 +632,14 @@ class BaseUserComponent:
 
         else:
             return device_claim_serializer.rep_dump(
-                {"status": "ok", "encrypted_answer": encrypted_answer}
+                {
+                    "status": "ok",
+                    "device_certificate": device_certificate,
+                    "encrypted_answer": encrypted_answer,
+                }
             )
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_device_cancel_invitation(self, client_ctx, msg):
         msg = device_cancel_invitation_serializer.req_load(msg)
 
@@ -550,22 +649,24 @@ class BaseUserComponent:
 
         return device_cancel_invitation_serializer.rep_dump({"status": "ok"})
 
-    @catch_protocole_errors
+    @catch_protocol_errors
     async def api_device_create(self, client_ctx, msg):
         msg = device_create_serializer.req_load(msg)
 
         try:
-            data = verify_device_certificate(
-                msg["device_certificate"], client_ctx.device_id, client_ctx.verify_key
+            data = DeviceCertificateContent.verify_and_load(
+                msg["device_certificate"],
+                author_verify_key=client_ctx.verify_key,
+                expected_author=client_ctx.device_id,
             )
 
-        except CryptoError as exc:
+        except DataError as exc:
             return {
                 "status": "invalid_certification",
                 "reason": f"Invalid certification data ({exc}).",
             }
 
-        if not timestamps_in_the_ballpark(data.certified_on, pendulum.now()):
+        if not timestamps_in_the_ballpark(data.timestamp, pendulum.now()):
             return {
                 "status": "invalid_certification",
                 "reason": f"Invalid timestamp in certification.",
@@ -578,8 +679,8 @@ class BaseUserComponent:
             device = Device(
                 device_id=data.device_id,
                 device_certificate=msg["device_certificate"],
-                device_certifier=data.certified_by,
-                created_on=data.certified_on,
+                device_certifier=data.author,
+                created_on=data.timestamp,
             )
             await self.create_device(
                 client_ctx.organization_id, device, encrypted_answer=msg["encrypted_answer"]
@@ -589,72 +690,7 @@ class BaseUserComponent:
 
         return device_create_serializer.rep_dump({"status": "ok"})
 
-    @catch_protocole_errors
-    async def api_device_revoke(self, client_ctx, msg):
-        msg = device_revoke_serializer.req_load(msg)
-
-        try:
-            data = verify_revoked_device_certificate(
-                msg["revoked_device_certificate"], client_ctx.device_id, client_ctx.verify_key
-            )
-
-        except CryptoError as exc:
-            return {
-                "status": "invalid_certification",
-                "reason": f"Invalid certification data ({exc}).",
-            }
-
-        if not timestamps_in_the_ballpark(data.certified_on, pendulum.now()):
-            return {
-                "status": "invalid_certification",
-                "reason": f"Invalid timestamp in certification.",
-            }
-
-        if client_ctx.device_id.user_id != data.device_id.user_id:
-            try:
-                user = await self.get_user(client_ctx.organization_id, client_ctx.device_id.user_id)
-
-            except UserNotFoundError as exc:
-                raise RuntimeError("User `{client_ctx.device_id.user_id}` disappeared !") from exc
-
-            if not user.is_admin:
-                return {
-                    "status": "invalid_role",
-                    "reason": f"User `{client_ctx.device_id.user_id}` is not admin",
-                }
-
-        try:
-            user_revoked_on = await self.revoke_device(
-                client_ctx.organization_id,
-                data.device_id,
-                msg["revoked_device_certificate"],
-                data.certified_by,
-                data.certified_on,
-            )
-
-        except UserNotFoundError:
-            return {"status": "not_found"}
-
-        except UserAlreadyRevokedError:
-            return {
-                "status": "already_revoked",
-                "reason": f"Device `{data.device_id}` already revoked",
-            }
-
-        return device_revoke_serializer.rep_dump(
-            {"status": "ok", "user_revoked_on": user_revoked_on}
-        )
-
     #### Virtual methods ####
-
-    async def set_user_admin(
-        self, organization_id: OrganizationID, user_id: UserID, is_admin: bool
-    ) -> None:
-        """
-        Raises:
-            UserNotFoundError
-        """
-        raise NotImplementedError()
 
     async def create_user(
         self, organization_id: OrganizationID, user: User, first_device: Device
@@ -674,6 +710,21 @@ class BaseUserComponent:
         """
         raise NotImplementedError()
 
+    async def revoke_user(
+        self,
+        organization_id: OrganizationID,
+        user_id: UserID,
+        revoked_user_certificate: bytes,
+        revoked_user_certifier: DeviceID,
+        revoked_on: pendulum.Pendulum = None,
+    ) -> None:
+        """
+        Raises:
+            UserNotFoundError
+            UserAlreadyRevokedError
+        """
+        raise NotImplementedError()
+
     async def get_user(self, organization_id: OrganizationID, user_id: UserID) -> User:
         """
         Raises:
@@ -683,7 +734,16 @@ class BaseUserComponent:
 
     async def get_user_with_trustchain(
         self, organization_id: OrganizationID, user_id: UserID
-    ) -> Tuple[User, Tuple[Device]]:
+    ) -> Tuple[User, Trustchain]:
+        """
+        Raises:
+            UserNotFoundError
+        """
+        raise NotImplementedError()
+
+    async def get_user_with_device_and_trustchain(
+        self, organization_id: OrganizationID, device_id: DeviceID
+    ) -> Tuple[User, Device, Trustchain]:
         """
         Raises:
             UserNotFoundError
@@ -692,7 +752,7 @@ class BaseUserComponent:
 
     async def get_user_with_devices_and_trustchain(
         self, organization_id: OrganizationID, user_id: UserID
-    ) -> Tuple[User, Tuple[Device], Tuple[Device]]:
+    ) -> Tuple[User, Tuple[Device], Trustchain]:
         """
         Raises:
             UserNotFoundError
@@ -790,21 +850,5 @@ class BaseUserComponent:
     ) -> None:
         """
         Raises: Nothing
-        """
-        raise NotImplementedError()
-
-    async def revoke_device(
-        self,
-        organization_id: OrganizationID,
-        device_id: DeviceID,
-        revoked_device_certificate: bytes,
-        revoked_device_certifier: DeviceID,
-        revoked_on: pendulum.Pendulum = None,
-    ) -> Optional[pendulum.Pendulum]:
-        """
-        Raises:
-            UserNotFoundError
-            UserAlreadyRevokedError
-        Returns: User revoked date if any
         """
         raise NotImplementedError()

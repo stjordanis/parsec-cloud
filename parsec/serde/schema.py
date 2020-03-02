@@ -1,13 +1,6 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-from marshmallow import (
-    Schema,
-    MarshalResult,
-    UnmarshalResult,
-    ValidationError,
-    validates_schema,
-    post_load,
-)
+from marshmallow import Schema, MarshalResult, UnmarshalResult, ValidationError, post_load
 
 
 try:
@@ -24,23 +17,7 @@ except ImportError:
 from parsec.serde.fields import String
 
 
-__all__ = ("UnknownCheckedSchema", "BaseCmdSchema")
-
-
-class UnknownCheckedSchema(BaseSchema):
-
-    """
-    ModelSchema with check for unknown field
-    """
-
-    @validates_schema(pass_original=True)
-    def check_unknown_fields(self, data, original_data):
-        for key in original_data:
-            if key not in self.fields or self.fields[key].dump_only:
-                raise ValidationError("Unknown field name {}".format(key))
-
-
-class BaseCmdSchema(UnknownCheckedSchema):
+class BaseCmdSchema(BaseSchema):
 
     cmd = String(required=True)
 
@@ -59,7 +36,7 @@ class BaseCmdSchema(UnknownCheckedSchema):
 # https://github.com/maximkulkin/marshmallow-oneofschema - MIT licensed)
 # This is needed because marshmallow-oneofschema depends of marshmallow which
 # cannot be installed along with toastedmarshmallow
-class OneOfSchema(UnknownCheckedSchema):
+class OneOfSchema(BaseSchema):
     """
     This is a special kind of schema that actually multiplexes other schemas
     based on object type. When serializing values, it uses get_obj_type() method
@@ -117,14 +94,18 @@ class OneOfSchema(UnknownCheckedSchema):
     type_field_remove = True
     type_schemas = {}
     fallback_type_schema = None
+    _instantiated_schemas = None
+    _instantiated_fallback_schema = None
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.type_schemas = {
-            k: v if isinstance(v, Schema) else v() for k, v in self.type_schemas.items()
-        }
-        if self.fallback_type_schema and not isinstance(self.fallback_type_schema, Schema):
-            self.fallback_type_schema = self.fallback_type_schema()
+    def _get_schema(self, type):
+        if self._instantiated_schemas is None:
+            self._instantiated_schemas = {
+                k: v if isinstance(v, Schema) else v() for k, v in self.type_schemas.items()
+            }
+            if self.fallback_type_schema and not isinstance(self.fallback_type_schema, Schema):
+                self._instantiated_fallback_schema = self.fallback_type_schema()
+
+        return self._instantiated_schemas.get(type, self._instantiated_fallback_schema)
 
     def get_obj_type(self, obj):
         """Returns name of object schema"""
@@ -158,7 +139,7 @@ class OneOfSchema(UnknownCheckedSchema):
                 None, {"_schema": "Unknown object class: %s" % obj.__class__.__name__}
             )
 
-        schema = self.type_schemas.get(obj_type, self.fallback_type_schema)
+        schema = self._get_schema(obj_type)
         if not schema:
             return MarshalResult(None, {"_schema": "Unsupported object type: %s" % obj_type})
 
@@ -205,7 +186,7 @@ class OneOfSchema(UnknownCheckedSchema):
             return UnmarshalResult({}, {self.type_field: ["Missing data for required field."]})
 
         try:
-            schema = self.type_schemas.get(data_type, self.fallback_type_schema)
+            schema = self._get_schema(data_type)
         except TypeError:
             # data_type could be unhashable
             return UnmarshalResult({}, {self.type_field: ["Invalid value: %s" % data_type]})

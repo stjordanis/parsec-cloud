@@ -4,14 +4,11 @@ import pytest
 import trio
 import pendulum
 
-from parsec.crypto import (
-    build_user_certificate,
-    build_device_certificate,
-    unsecure_read_user_certificate,
+from parsec.api.data import UserCertificateContent, DeviceCertificateContent, UserClaimContent
+from parsec.core.backend_connection import (
+    backend_authenticated_cmds_factory,
+    backend_anonymous_cmds_factory,
 )
-from parsec.core.types import UnverifiedRemoteUser
-from parsec.core.backend_connection import backend_cmds_pool_factory, backend_anonymous_cmds_factory
-from parsec.core.invite_claim import generate_user_encrypted_claim, extract_user_encrypted_claim
 
 
 @pytest.mark.trio
@@ -20,48 +17,60 @@ async def test_user_invite_then_claim_ok(
 ):
     token = "424242"
 
-    await backend.user.set_user_admin(alice.organization_id, alice.user_id, True)
-
     async def _alice_invite():
-        encrypted_claim = await alice_backend_cmds.user_invite(mallory.user_id)
-        claim = extract_user_encrypted_claim(alice.private_key, encrypted_claim)
+        rep = await alice_backend_cmds.user_invite(mallory.user_id)
+        assert rep["status"] == "ok"
+        claim = UserClaimContent.decrypt_and_load_for(
+            rep["encrypted_claim"], recipient_privkey=alice.private_key
+        )
 
-        assert claim["token"] == token
+        assert claim.token == token
 
         now = pendulum.now()
-        user_certificate = build_user_certificate(
-            alice.device_id, alice.signing_key, claim["device_id"].user_id, claim["public_key"], now
-        )
-        device_certificate = build_device_certificate(
-            alice.device_id, alice.signing_key, claim["device_id"], claim["verify_key"], now
-        )
+        user_certificate = UserCertificateContent(
+            author=alice.device_id,
+            timestamp=now,
+            user_id=claim.device_id.user_id,
+            public_key=claim.public_key,
+            is_admin=False,
+        ).dump_and_sign(alice.signing_key)
+        device_certificate = DeviceCertificateContent(
+            author=alice.device_id,
+            timestamp=now,
+            device_id=claim.device_id,
+            verify_key=claim.verify_key,
+        ).dump_and_sign(alice.signing_key)
         with trio.fail_after(1):
-            await alice_backend_cmds.user_create(user_certificate, device_certificate, False)
+            rep = await alice_backend_cmds.user_create(user_certificate, device_certificate)
+            assert rep["status"] == "ok"
 
     async def _mallory_claim():
         async with backend_anonymous_cmds_factory(mallory.organization_addr) as cmds:
-            invitation_creator, trustchain = await cmds.user_get_invitation_creator(mallory.user_id)
-            assert isinstance(invitation_creator, UnverifiedRemoteUser)
-            assert trustchain == []
+            rep = await cmds.user_get_invitation_creator(mallory.user_id)
+            assert rep["trustchain"] == {"devices": [], "revoked_users": [], "users": []}
+            creator = UserCertificateContent.unsecure_load(rep["user_certificate"])
+            creator_device = DeviceCertificateContent.unsecure_load(rep["device_certificate"])
+            assert creator_device.device_id.user_id == creator.user_id
 
-            creator = unsecure_read_user_certificate(invitation_creator.user_certificate)
-
-            encrypted_claim = generate_user_encrypted_claim(
-                creator.public_key, token, mallory.device_id, mallory.public_key, mallory.verify_key
-            )
+            encrypted_claim = UserClaimContent(
+                device_id=mallory.device_id,
+                token=token,
+                public_key=mallory.public_key,
+                verify_key=mallory.verify_key,
+            ).dump_and_encrypt_for(recipient_pubkey=creator.public_key)
             with trio.fail_after(1):
-                await cmds.user_claim(mallory.user_id, encrypted_claim)
+                rep = await cmds.user_claim(mallory.user_id, encrypted_claim)
+                assert rep["status"] == "ok"
 
-    async with trio.open_nursery() as nursery:
-        nursery.start_soon(_alice_invite)
-        await running_backend.backend.event_bus.spy.wait(
-            "event.connected", kwargs={"event_name": "user.claimed"}
-        )
-        nursery.start_soon(_mallory_claim)
+    with running_backend.backend.event_bus.listen() as spy:
+        async with trio.open_service_nursery() as nursery:
+            nursery.start_soon(_alice_invite)
+            await spy.wait_with_timeout("event.connected", {"event_name": "user.claimed"})
+            nursery.start_soon(_mallory_claim)
 
     # Now mallory should be able to connect to backend
-    async with backend_cmds_pool_factory(
+    async with backend_authenticated_cmds_factory(
         mallory.organization_addr, mallory.device_id, mallory.signing_key
     ) as cmds:
-        pong = await cmds.ping("Hello World !")
-        assert pong == "Hello World !"
+        rep = await cmds.ping("Hello World !")
+        assert rep == {"status": "ok", "pong": "Hello World !"}

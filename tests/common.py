@@ -1,75 +1,34 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-import sqlite3
 from unittest.mock import Mock
-from contextlib import ExitStack
 from inspect import iscoroutinefunction
+from contextlib import ExitStack, contextmanager
 
 import trio
 import attr
 import pendulum
 
+from parsec.core.types import WorkspaceRole
 from parsec.core.logged_core import LoggedCore
-from parsec.core.fs import UserFS, FS
-from parsec.core.persistent_storage import PersistentStorage
-from parsec.core.local_storage import LocalStorage, LocalStorageMissingEntry
+from parsec.core.fs import UserFS
 from parsec.api.transport import Transport, TransportError
 
 
-class InMemoryPersistentStorage(PersistentStorage):
-    """An in-memory version of the local database.
-
-    It doesn't perform any access to the file system
-    and has very permissive life cycle.
+def addr_with_device_subdomain(addr, device_id):
     """
-
-    def __init__(self, **kwargs):
-        self._data = {}
-        super().__init__("unused", **kwargs)
-
-        self.dirty_conn = sqlite3.connect(":memory:")
-        self.clean_conn = sqlite3.connect(":memory:")
-        self.create_db()
-
-    # Disable life cycle
-
-    def connect(self):
-        pass
-
-    def close(self):
-        pass
-
-    # File systeme interface
-
-    def _read_file(self, access, path):
-        filepath = path / str(access.id)
-        try:
-            return self._data[filepath]
-        except KeyError:
-            raise LocalStorageMissingEntry(access)
-
-    def _write_file(self, access, content, path):
-        filepath = path / str(access.id)
-        self._data[filepath] = content
-
-    def _remove_file(self, access, path):
-        filepath = path / str(access.id)
-        try:
-            del self._data[filepath]
-        except KeyError:
-            raise LocalStorageMissingEntry(access)
+    Useful to have each device access the same backend with a different hostname
+    so tcp_stream_spy can put some offline and leave others online
+    """
+    device_specific_hostname = f"{device_id.user_id}.{device_id.device_name}.{addr.hostname}"
+    return type(addr).from_url(addr.to_url().replace(addr.hostname, device_specific_hostname, 1))
 
 
-class InMemoryLocalStorage(LocalStorage):
-    def __init__(self, device_id):
-        super().__init__(device_id, "unused")
-        self.persistent_storage = InMemoryPersistentStorage()
-
-
+@contextmanager
 def freeze_time(time):
     if isinstance(time, str):
         time = pendulum.parse(time)
-    return pendulum.test(time)
+    with pendulum.test(time):
+        yield time
 
 
 class AsyncMock(Mock):
@@ -172,39 +131,86 @@ async def create_shared_workspace(name, creator, *shared_with):
     This is more tricky than it seems given all Cores/FSs must agree on the
     workspace version and (only for the Cores) be ready to listen to the
     workspace's vlob group events.
+    This is *even* more tricky considering we want the cores involved in the
+    sharing to endup in a stable state (no event wildly fired or coroutine in
+    the middle of a processing when leaving this function) to avoid polluting
+    the actual test.
     """
-    spies = []
-    fss = []
-
     with ExitStack() as stack:
-        for x in (creator, *shared_with):
-            if isinstance(x, LoggedCore):
-                # In case core has been passed
-                spies.append(stack.enter_context(x.event_bus.listen()))
-                fss.append(x.user_fs)
-            elif isinstance(x, UserFS):
-                fss.append(x)
-            elif isinstance(x, FS):
-                fss.append(x.user_fs)
-            else:
-                raise ValueError(f"{x!r} is not a {FS!r} or a {LoggedCore!r}")
+        if isinstance(creator, LoggedCore):
+            creator_spy = stack.enter_context(creator.event_bus.listen())
+            creator_user_fs = creator.user_fs
+        elif isinstance(creator, UserFS):
+            creator_user_fs = creator
+            creator_spy = None
+        else:
+            raise ValueError(f"{creator!r} is not a {UserFS!r} or a {LoggedCore!r}")
 
-        creator_user_fs, *shared_with_fss = fss
+        all_user_fss = []
+        shared_with_spies = []
+        shared_with_cores_and_user_fss = []
+        for x in shared_with:
+            if isinstance(x, LoggedCore):
+                user_fs = x.user_fs
+                core = x
+                shared_with_spies.append(stack.enter_context(x.event_bus.listen()))
+            elif isinstance(x, UserFS):
+                user_fs = x
+                core = None
+            else:
+                raise ValueError(f"{x!r} is not a {UserFS!r} or a {LoggedCore!r}")
+            all_user_fss.append(user_fs)
+            if user_fs.device.user_id != creator_user_fs.device.user_id:
+                shared_with_cores_and_user_fss.append((core, user_fs))
+
         wid = await creator_user_fs.workspace_create(name)
         await creator_user_fs.sync()
         workspace = creator_user_fs.get_workspace(wid)
-        await workspace.sync("/")
+        await workspace.sync()
 
-        for recipient_user_fs in shared_with_fss:
-            if recipient_user_fs.device.user_id == creator_user_fs.device.user_id:
-                await recipient_user_fs.sync()
-            else:
-                await creator_user_fs.workspace_share(wid, recipient_user_fs.device.user_id)
+        for recipient_core, recipient_user_fs in shared_with_cores_and_user_fss:
+            await creator_user_fs.workspace_share(
+                wid, recipient_user_fs.device.user_id, WorkspaceRole.MANAGER
+            )
+            # Don't try to double-cross core's message monitor !
+            if not recipient_core:
                 await recipient_user_fs.process_last_messages()
-                await recipient_user_fs.sync()
 
         with trio.fail_after(1):
-            for spy in spies:
-                await spy.wait("backend.listener.restarted")
+            if creator_spy:
+                await creator_spy.wait_multiple(
+                    ["fs.workspace.created", "backend.realm.roles_updated"]
+                )
+            for spy in shared_with_spies:
+                await spy.wait_multiple(
+                    ["backend.realm.roles_updated", "backend.message.received", "sharing.updated"]
+                )
 
-        return wid
+        for user_fs in all_user_fss:
+            await user_fs.sync()
+
+    return wid
+
+
+def compare_fs_dumps(entry_1, entry_2):
+    entry_1.pop("author", None)
+    entry_2.pop("author", None)
+
+    def cook_entry(entry):
+        if "children" in entry:
+            return {**entry, "children": {k: v["id"] for k, v in entry["children"].items()}}
+        else:
+            return entry
+
+    assert not entry_1.get("need_sync", False)
+    assert not entry_2.get("need_sync", False)
+
+    if "need_sync" not in entry_1 or "need_sync" not in entry_2:
+        # One of the entry is not loaded
+        return
+
+    assert cook_entry(entry_1) == cook_entry(entry_2)
+    if "children" in entry_1:
+        for key, child_for_entry_1 in entry_1["children"].items():
+            child_for_entry_2 = entry_2["children"][key]
+            compare_fs_dumps(child_for_entry_1, child_for_entry_2)

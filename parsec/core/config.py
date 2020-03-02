@@ -42,7 +42,7 @@ def get_default_config_dir(environ: dict):
 
 
 def get_default_mountpoint_base_dir(environ: dict):
-    return Path.home() / "parsec_mnt"
+    return Path.home() / "Parsec"
 
 
 @attr.s(slots=True, frozen=True, auto_attribs=True)
@@ -53,7 +53,9 @@ class CoreConfig:
     mountpoint_base_dir: Path
 
     debug: bool = False
-    backend_connection_keepalive: int = 0
+
+    backend_max_cooldown: int = 30
+    backend_connection_keepalive: Optional[int] = 29
     backend_max_connections: int = 4
 
     invitation_token_size: int = 8
@@ -63,17 +65,19 @@ class CoreConfig:
     sentry_url: Optional[str] = None
     telemetry_enabled: bool = True
 
-    ssl_keyfile: Optional[str] = None
-    ssl_certfile: Optional[str] = None
-
     gui_last_device: Optional[str] = None
     gui_tray_enabled: bool = True
-    gui_language: Optional[str] = "en"
+    gui_language: Optional[str] = None
     gui_first_launch: bool = True
+    gui_last_version: Optional[str] = None
     gui_check_version_at_startup: bool = True
-    gui_check_version_url: str = "https://github.com/Scille/parsec-build/releases/latest"
+    gui_check_version_url: str = "https://github.com/Scille/parsec-cloud/releases/latest"
     gui_confirmation_before_close: bool = True
     gui_workspace_color: bool = False
+    gui_allow_multiple_instances: bool = False
+
+    ipc_socket_file: Path = None
+    ipc_win32_mutex_name: str = "parsec-cloud"
 
     def evolve(self, **kwargs):
         return attr.evolve(self, **kwargs)
@@ -85,40 +89,54 @@ def config_factory(
     cache_base_dir: Path = None,
     mountpoint_base_dir: Path = None,
     mountpoint_enabled: bool = False,
-    backend_connection_keepalive: int = 30,
+    backend_max_cooldown: int = 30,
+    backend_connection_keepalive: Optional[int] = 29,
     backend_max_connections: int = 4,
     telemetry_enabled: bool = True,
     debug: bool = False,
-    ssl_keyfile: str = None,
-    ssl_certfile: str = None,
     gui_last_device: str = None,
     gui_tray_enabled: bool = True,
-    gui_language: str = "en",
+    gui_language: str = None,
     gui_first_launch: bool = True,
+    gui_last_version: str = None,
     gui_check_version_at_startup: bool = True,
     gui_workspace_color: bool = False,
+    gui_allow_multiple_instances: bool = False,
     environ: dict = {},
+    **_,
 ) -> CoreConfig:
-    return CoreConfig(
+    data_base_dir = data_base_dir or get_default_data_base_dir(environ)
+    core_config = CoreConfig(
         config_dir=config_dir or get_default_config_dir(environ),
-        data_base_dir=data_base_dir or get_default_data_base_dir(environ),
+        data_base_dir=data_base_dir,
         cache_base_dir=cache_base_dir or get_default_cache_base_dir(environ),
-        mountpoint_base_dir=mountpoint_base_dir or get_default_mountpoint_base_dir(environ),
+        mountpoint_base_dir=get_default_mountpoint_base_dir(environ),
         mountpoint_enabled=mountpoint_enabled,
+        backend_max_cooldown=backend_max_cooldown,
         backend_connection_keepalive=backend_connection_keepalive,
         backend_max_connections=backend_max_connections,
         telemetry_enabled=telemetry_enabled,
         debug=debug,
-        ssl_keyfile=ssl_keyfile,
-        ssl_certfile=ssl_certfile,
         sentry_url=environ.get("SENTRY_URL") or None,
         gui_last_device=gui_last_device,
         gui_tray_enabled=gui_tray_enabled,
         gui_language=gui_language,
         gui_first_launch=gui_first_launch,
+        gui_last_version=gui_last_version,
         gui_check_version_at_startup=gui_check_version_at_startup,
         gui_workspace_color=gui_workspace_color,
+        gui_allow_multiple_instances=gui_allow_multiple_instances,
+        ipc_socket_file=data_base_dir / "parsec-cloud.lock",
+        ipc_win32_mutex_name="parsec-cloud",
     )
+
+    # Make sure the directories exist on the system
+    core_config.config_dir.mkdir(parents=True, exist_ok=True)
+    core_config.data_base_dir.mkdir(parents=True, exist_ok=True)
+    core_config.cache_base_dir.mkdir(parents=True, exist_ok=True)
+    core_config.mountpoint_base_dir.mkdir(parents=True, exist_ok=True)
+
+    return core_config
 
 
 def load_config(config_dir: Path, **extra_config) -> CoreConfig:
@@ -147,11 +165,6 @@ def load_config(config_dir: Path, **extra_config) -> CoreConfig:
     except (KeyError, ValueError):
         pass
 
-    try:
-        data_conf["mountpoint_base_dir"] = Path(data_conf["mountpoint_base_dir"])
-    except (KeyError, ValueError):
-        pass
-
     return config_factory(config_dir=config_dir, **data_conf, **extra_config, environ=os.environ)
 
 
@@ -169,15 +182,17 @@ def save_config(config: CoreConfig):
             {
                 "data_base_dir": str(config.data_base_dir),
                 "cache_base_dir": str(config.cache_base_dir),
-                "mountpoint_base_dir": str(config.mountpoint_base_dir),
                 "telemetry_enabled": config.telemetry_enabled,
+                "backend_max_cooldown": config.backend_max_cooldown,
                 "backend_connection_keepalive": config.backend_connection_keepalive,
                 "gui_last_device": config.gui_last_device,
                 "gui_tray_enabled": config.gui_tray_enabled,
                 "gui_language": config.gui_language,
                 "gui_first_launch": config.gui_first_launch,
+                "gui_last_version": config.gui_last_version,
                 "gui_check_version_at_startup": config.gui_check_version_at_startup,
                 "gui_workspace_color": config.gui_workspace_color,
+                "gui_allow_multiple_instances": config.gui_allow_multiple_instances,
             },
             indent=True,
         )

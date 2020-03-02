@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch
 
-from parsec.api.protocole.base import packb, unpackb
+from parsec.api.protocol.base import packb, unpackb
 from parsec.backend.utils import anonymous_api, check_anonymous_api_allowed
 
 
@@ -54,6 +54,9 @@ async def test_anonymous_has_limited_access(anonymous_backend_sock):
         "message_new",
         "pubkey_get",
         "organization_create",
+        "organization_status",
+        "organization_stats",
+        "organization_update",
     ]:
         await anonymous_backend_sock.send(packb({"cmd": cmd}))
         rep = await anonymous_backend_sock.recv()

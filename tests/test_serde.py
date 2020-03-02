@@ -1,10 +1,19 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
+import pytest
 import pendulum
 import uuid
 from collections import namedtuple
 
-from parsec.serde import packb, unpackb, UnknownCheckedSchema, OneOfSchema, Serializer, fields
+from parsec.serde import (
+    packb,
+    unpackb,
+    BaseSchema,
+    OneOfSchema,
+    MsgpackSerializer,
+    fields,
+    SerdeError,
+)
 
 
 def test_pack_datetime():
@@ -24,18 +33,28 @@ def test_pack_uuid():
 
 
 def test_repr_serializer():
-    class MySchema(UnknownCheckedSchema):
+    class MySchema(BaseSchema):
         pass
 
-    serializer = Serializer(MySchema)
-    assert repr(serializer) == "Serializer(schema=MySchema)"
+    serializer = MsgpackSerializer(MySchema)
+    assert repr(serializer) == "MsgpackSerializer(schema=MySchema)"
+
+
+def test_serializer_loads_bad_data():
+    class BirdSchema(BaseSchema):
+        flying = fields.Boolean(required=True)
+
+    serializer = MsgpackSerializer(BirdSchema)
+    for raw in (packb(0), packb([]), packb({}), b"dummy"):
+        with pytest.raises(SerdeError):
+            serializer.loads(raw)
 
 
 def test_oneof_schema():
-    class BirdSchema(UnknownCheckedSchema):
+    class BirdSchema(BaseSchema):
         flying = fields.Boolean()
 
-    class FishSchema(UnknownCheckedSchema):
+    class FishSchema(BaseSchema):
         swimming = fields.Int()
 
     class AnimalSchema(OneOfSchema):
@@ -51,11 +70,12 @@ def test_oneof_schema():
     res, errors = schema.load({"type": "dummy", "swimming": True})
     assert errors == {"type": ["Unsupported value: dummy"]}
 
+    # Schema ignore unknown fields
     res, errors = schema.load(
         [{"type": "fish", "swimming": True}, {"type": "bird", "swimming": True}], many=True
     )
     assert res == [{"swimming": True}, {}]
-    assert errors == {1: {"_schema": ["Unknown field name swimming"]}}
+    assert not errors
 
     bird_cls = namedtuple("bird", "flying,ignore_me")
     bird = bird_cls(True, "whatever")

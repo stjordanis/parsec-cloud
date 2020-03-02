@@ -4,7 +4,10 @@ import errno
 import pytest
 from unittest.mock import ANY
 
-from parsec.core.types import FsPath
+from parsec.api.protocol import DeviceID, RealmRole
+from parsec.api.data import Manifest as RemoteManifest
+from parsec.core.types import FsPath, EntryID
+from parsec.core.fs.exceptions import FSError
 
 
 @pytest.fixture
@@ -15,8 +18,14 @@ async def alice_workspace(alice_user_fs, running_backend):
     await workspace.mkdir("/foo")
     await workspace.touch("/foo/bar")
     await workspace.touch("/foo/baz")
-    await workspace.sync("/")
+    await workspace.sync()
     return workspace
+
+
+@pytest.mark.trio
+async def test_workspace_properties(alice_workspace):
+    assert alice_workspace.get_workspace_name() == "w"
+    assert alice_workspace.get_encryption_revision() == 1
 
 
 @pytest.mark.trio
@@ -59,6 +68,13 @@ async def test_path_info(alice_workspace):
 
 
 @pytest.mark.trio
+async def test_get_user_roles(alice_workspace):
+    assert await alice_workspace.get_user_roles() == {
+        alice_workspace.device.user_id: RealmRole.OWNER
+    }
+
+
+@pytest.mark.trio
 async def test_exists(alice_workspace):
     assert await alice_workspace.exists("/") is True
     assert await alice_workspace.exists("/foo") is True
@@ -68,6 +84,7 @@ async def test_exists(alice_workspace):
     assert await alice_workspace.exists("/fiz") is False
     assert await alice_workspace.exists("/foo/fiz") is False
     assert await alice_workspace.exists("/fiz/foo") is False
+    assert await alice_workspace.exists("/foo/bar/baz") is False
 
 
 @pytest.mark.trio
@@ -183,10 +200,7 @@ async def test_touch(alice_workspace):
     with pytest.raises(FileExistsError):
         await alice_workspace.touch("/bar", exist_ok=False)
 
-    # TODO: is that really what we expect here?
-    # pathlib seems to be fine with touching a directory
-    with pytest.raises(FileExistsError):
-        await alice_workspace.touch("/foo")
+    await alice_workspace.touch("/foo")
 
 
 @pytest.mark.trio
@@ -239,13 +253,26 @@ async def test_read_bytes(alice_workspace):
 
 @pytest.mark.trio
 async def test_write_bytes(alice_workspace):
-    assert await alice_workspace.write_bytes("/foo/bar", b"abcde")
+    # Pathlib mode (truncate=True)
+    await alice_workspace.write_bytes("/foo/bar", b"abcde")
     assert await alice_workspace.read_bytes("/foo/bar") == b"abcde"
+    await alice_workspace.write_bytes("/foo/bar", b"xyz", offset=1)
+    assert await alice_workspace.read_bytes("/foo/bar") == b"axyz"
+    await alice_workspace.write_bytes("/foo/bar", b"[append]", offset=-1)
+    assert await alice_workspace.read_bytes("/foo/bar") == b"axyz[append]"
 
-    assert await alice_workspace.write_bytes("/foo/bar", b"xyz", offset=1)
+    # Clear the content of an existing file
+    await alice_workspace.write_bytes("/foo/bar", b"")
+    assert await alice_workspace.read_bytes("/foo/bar") == b""
+
+    # Atomic write mode (truncate=False)
+    assert await alice_workspace.write_bytes("/foo/bar", b"abcde", truncate=False) == 5
+    assert await alice_workspace.read_bytes("/foo/bar") == b"abcde"
+    assert await alice_workspace.write_bytes("/foo/bar", b"xyz", offset=1, truncate=False) == 3
     assert await alice_workspace.read_bytes("/foo/bar") == b"axyze"
-
-    assert await alice_workspace.write_bytes("/foo/bar", b"[append]", offset=-1)
+    assert (
+        await alice_workspace.write_bytes("/foo/bar", b"[append]", offset=-1, truncate=False) == 8
+    )
     assert await alice_workspace.read_bytes("/foo/bar") == b"axyze[append]"
 
     with pytest.raises(IsADirectoryError):
@@ -283,6 +310,12 @@ async def test_move(alice_workspace):
 
     with pytest.raises(FileExistsError):
         await alice_workspace.move("/containfoz/foz/bal", "/baz")
+
+    with pytest.raises(OSError):
+        await alice_workspace.move("/containfoz", "/containfoz/foz")
+
+    with pytest.raises(FileExistsError):
+        await alice_workspace.move("/containfoz/foz", "/containfoz")
 
 
 @pytest.mark.trio
@@ -325,3 +358,75 @@ async def test_rmtree(alice_workspace):
 
     with pytest.raises(PermissionError):
         await alice_workspace.rmtree("/")
+
+
+@pytest.mark.trio
+async def test_dump(alice_workspace):
+    baz_id = await alice_workspace.path_id("/foo/baz")
+    async with alice_workspace.local_storage.lock_entry_id(baz_id):
+        await alice_workspace.local_storage.clear_manifest(baz_id)
+    assert await alice_workspace.dump() == {
+        "base_version": 1,
+        "children": {
+            "foo": {
+                "base_version": 2,
+                "children": {
+                    "bar": {
+                        "base_version": 1,
+                        "blocksize": 524_288,
+                        "blocks": [],
+                        "created": ANY,
+                        "id": ANY,
+                        "is_placeholder": False,
+                        "need_sync": False,
+                        "parent": ANY,
+                        "size": 0,
+                        "updated": ANY,
+                    },
+                    "baz": {"id": ANY},
+                },
+                "created": ANY,
+                "id": ANY,
+                "is_placeholder": False,
+                "need_sync": False,
+                "parent": ANY,
+                "updated": ANY,
+            }
+        },
+        "created": ANY,
+        "id": ANY,
+        "is_placeholder": False,
+        "need_sync": False,
+        "updated": ANY,
+    }
+
+
+@pytest.mark.trio
+async def test_path_info_remote_loader_exceptions(monkeypatch, alice_workspace, alice):
+    manifest = await alice_workspace.transactions._get_manifest_from_path(FsPath("/foo/bar"))
+    async with alice_workspace.local_storage.lock_entry_id(manifest.id):
+        await alice_workspace.local_storage.clear_manifest(manifest.id)
+
+    vanilla_file_manifest_deserialize = RemoteManifest._deserialize
+
+    def mocked_file_manifest_deserialize(*args, **kwargs):
+        return vanilla_file_manifest_deserialize(*args, **kwargs).evolve(**manifest_modifiers)
+
+    monkeypatch.setattr(RemoteManifest, "_deserialize", mocked_file_manifest_deserialize)
+
+    manifest_modifiers = {"id": EntryID()}
+    with pytest.raises(FSError) as exc:
+        await alice_workspace.path_info(FsPath("/foo/bar"))
+    assert f"Invalid entry ID: expected `{manifest.id}`, got `{manifest_modifiers['id']}`" in str(
+        exc.value
+    )
+
+    manifest_modifiers = {"version": 4}
+    with pytest.raises(FSError) as exc:
+        await alice_workspace.path_info(FsPath("/foo/bar"))
+    assert "Invalid version: expected `1`, got `4`" in str(exc.value)
+
+    manifest_modifiers = {"author": DeviceID("mallory@pc1")}
+    with pytest.raises(FSError) as exc:
+        await alice_workspace.path_info(FsPath("/foo/bar"))
+    assert "Invalid author: expected `alice@dev1`, got `mallory@pc1`" in str(exc.value)

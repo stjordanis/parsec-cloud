@@ -2,18 +2,18 @@
 
 from typing import List, Tuple
 from pathlib import Path
+from uuid import uuid4
 
-from parsec.types import DeviceID, OrganizationID, BackendOrganizationAddr
-from parsec.serde import SerdeValidationError, SerdePackingError
-from parsec.crypto import SigningKey, PrivateKey, generate_secret_key
-from parsec.core.types import LocalDevice, local_device_serializer, ManifestAccess
+from parsec.crypto import SecretKey, SigningKey, PrivateKey
+from parsec.api.protocol import OrganizationID, DeviceID
+from parsec.api.data import DataError
+from parsec.core.types import EntryID, LocalDevice, BackendOrganizationAddr
 from parsec.core.local_device.exceptions import (
     LocalDeviceError,
     LocalDeviceCryptoError,
     LocalDeviceNotFoundError,
     LocalDeviceAlreadyExistsError,
     LocalDeviceValidationError,
-    LocalDevicePackingError,
 )
 from parsec.core.local_device.cipher import (
     BaseLocalDeviceDecryptor,
@@ -21,19 +21,20 @@ from parsec.core.local_device.cipher import (
     PasswordDeviceEncryptor,
     PasswordDeviceDecryptor,
 )
-from parsec.core.local_device.pkcs11_cipher import PKCS11DeviceEncryptor, PKCS11DeviceDecryptor
 
 
 def generate_new_device(
-    device_id: DeviceID, organization_addr: BackendOrganizationAddr
+    device_id: DeviceID, organization_addr: BackendOrganizationAddr, is_admin: bool = False
 ) -> LocalDevice:
     return LocalDevice(
         organization_addr=organization_addr,
         device_id=device_id,
         signing_key=SigningKey.generate(),
         private_key=PrivateKey.generate(),
-        user_manifest_access=ManifestAccess(),
-        local_symkey=generate_secret_key(),
+        is_admin=is_admin,
+        user_manifest_id=EntryID(uuid4().hex),
+        user_manifest_key=SecretKey.generate(),
+        local_symkey=SecretKey.generate(),
     )
 
 
@@ -79,7 +80,6 @@ def get_cipher_info(key_file: Path) -> str:
         LocalDeviceNotFoundError
         LocalDeviceCryptoError
     """
-    from .pkcs11_cipher import PKCS11DeviceDecryptor
     from .cipher import PasswordDeviceDecryptor
 
     try:
@@ -87,10 +87,7 @@ def get_cipher_info(key_file: Path) -> str:
     except OSError:
         raise LocalDeviceNotFoundError(f"Config file {key_file} is missing")
 
-    for decryptor_cls, cipher in (
-        (PKCS11DeviceDecryptor, "pkcs11"),
-        (PasswordDeviceDecryptor, "password"),
-    ):
+    for decryptor_cls, cipher in ((PasswordDeviceDecryptor, "password"),):
         if decryptor_cls.can_decrypt(ciphertext):
             return cipher
 
@@ -119,23 +116,11 @@ def save_device_with_password(
         LocalDevicePackingError
     """
     encryptor = PasswordDeviceEncryptor(password)
-    _save_device(config_dir, device, encryptor, force)
+    key_file = get_key_file(config_dir, device)
+    _save_device(key_file, device, encryptor, force)
 
 
-def load_device_with_pkcs11(key_file: Path, token_id: int, key_id: int, pin: str) -> LocalDevice:
-    """
-        LocalDeviceNotFoundError
-        LocalDeviceCryptoError
-        LocalDeviceValidationError
-        LocalDevicePackingError
-    """
-    decryptor = PKCS11DeviceDecryptor(token_id, key_id, pin)
-    return _load_device(key_file, decryptor)
-
-
-def save_device_with_pkcs11(
-    config_dir: Path, device: LocalDevice, token_id: int, key_id: int
-) -> None:
+def change_device_password(key_file: Path, old_password: str, new_password: str) -> None:
     """
         LocalDeviceError
         LocalDeviceNotFoundError
@@ -143,8 +128,11 @@ def save_device_with_pkcs11(
         LocalDeviceValidationError
         LocalDevicePackingError
     """
-    encryptor = PKCS11DeviceEncryptor(token_id, key_id)
-    _save_device(config_dir, device, encryptor)
+    decryptor = PasswordDeviceDecryptor(old_password)
+    encryptor = PasswordDeviceEncryptor(new_password)
+
+    device = _load_device(key_file, decryptor)
+    _save_device(key_file, device, encryptor, force=True)
 
 
 def _load_device(key_file: Path, decryptor: BaseLocalDeviceDecryptor) -> LocalDevice:
@@ -162,16 +150,14 @@ def _load_device(key_file: Path, decryptor: BaseLocalDeviceDecryptor) -> LocalDe
 
     raw = decryptor.decrypt(ciphertext)
     try:
-        return local_device_serializer.loads(raw)
+        return LocalDevice.load(raw)
 
-    except SerdeValidationError as exc:
-        raise LocalDeviceValidationError(str(exc)) from exc
-    except SerdePackingError as exc:
-        raise LocalDevicePackingError(str(exc)) from exc
+    except DataError as exc:
+        raise LocalDeviceValidationError(f"Cannot load local device: {exc}") from exc
 
 
 def _save_device(
-    config_dir: Path, device: LocalDevice, encryptor: BaseLocalDeviceEncryptor, force: bool = False
+    key_file: Path, device: LocalDevice, encryptor: BaseLocalDeviceEncryptor, force: bool = False
 ) -> None:
     """
     Raises:
@@ -181,20 +167,16 @@ def _save_device(
         LocalDeviceValidationError
         LocalDevicePackingError
     """
-    key_file = get_key_file(config_dir, device)
     if key_file.exists() and not force:
         raise LocalDeviceAlreadyExistsError(
             f"Device `{device.organization_id}:{device.device_id}` already exists"
         )
 
     try:
-        raw = local_device_serializer.dumps(device)
+        raw = device.dump()
 
-    except SerdeValidationError as exc:
-        raise LocalDeviceValidationError(str(exc)) from exc
-
-    except SerdePackingError as exc:
-        raise LocalDevicePackingError(str(exc)) from exc
+    except DataError as exc:
+        raise LocalDeviceValidationError(f"Cannot dump local device: {exc}") from exc
 
     ciphertext = encryptor.encrypt(raw)
     try:

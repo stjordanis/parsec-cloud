@@ -6,9 +6,21 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>294</width>
+    <width>260</width>
     <height>534</height>
    </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>260</width>
+    <height>0</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>260</width>
+    <height>16777215</height>
+   </size>
   </property>
   <property name="windowTitle">
    <string>Form</string>
@@ -50,6 +62,7 @@ color: rgb(255, 255, 255);
 background-color: rgb(46, 46, 46);
 text-align: left;
 padding-left: 10px;
+font-size: 20px;
 }
 
 QPushButton:checked
@@ -143,7 +156,7 @@ border-bottom: 2px solid rgb(130, 130, 130);
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="button_files">
+         <widget class="PointingHandButton" name="button_files">
           <property name="enabled">
            <bool>true</bool>
           </property>
@@ -165,30 +178,12 @@ border-bottom: 2px solid rgb(130, 130, 130);
             <height>0</height>
            </size>
           </property>
-          <property name="font">
-           <font>
-            <family>Proxima Nova</family>
-            <pointsize>13</pointsize>
-            <weight>50</weight>
-            <italic>false</italic>
-            <bold>false</bold>
-           </font>
-          </property>
-          <property name="layoutDirection">
-           <enum>Qt::LeftToRight</enum>
-          </property>
-          <property name="autoFillBackground">
-           <bool>false</bool>
-          </property>
-          <property name="styleSheet">
-           <string notr="true"/>
-          </property>
           <property name="text">
-           <string>   Documents</string>
+           <string>MENU_DOCUMENTS</string>
           </property>
           <property name="icon">
            <iconset resource="../rc/resources.qrc">
-            <normaloff>:/icons/images/icons/documents.png</normaloff>:/icons/images/icons/documents.png</iconset>
+            <normaloff>:/icons/images/icons/left_menu/storage.svg</normaloff>:/icons/images/icons/left_menu/storage.svg</iconset>
           </property>
           <property name="iconSize">
            <size>
@@ -205,7 +200,7 @@ border-bottom: 2px solid rgb(130, 130, 130);
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="button_users">
+         <widget class="PointingHandButton" name="button_users">
           <property name="enabled">
            <bool>true</bool>
           </property>
@@ -227,24 +222,12 @@ border-bottom: 2px solid rgb(130, 130, 130);
             <height>64</height>
            </size>
           </property>
-          <property name="font">
-           <font>
-            <family>Proxima Nova</family>
-            <pointsize>13</pointsize>
-            <weight>50</weight>
-            <italic>false</italic>
-            <bold>false</bold>
-           </font>
-          </property>
-          <property name="styleSheet">
-           <string notr="true"/>
-          </property>
           <property name="text">
-           <string>   Users</string>
+           <string>MENU_USERS</string>
           </property>
           <property name="icon">
            <iconset resource="../rc/resources.qrc">
-            <normaloff>:/icons/images/icons/group.png</normaloff>:/icons/images/icons/group.png</iconset>
+            <normaloff>:/icons/images/icons/left_menu/users.svg</normaloff>:/icons/images/icons/left_menu/users.svg</iconset>
           </property>
           <property name="iconSize">
            <size>
@@ -261,7 +244,7 @@ border-bottom: 2px solid rgb(130, 130, 130);
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="button_devices">
+         <widget class="PointingHandButton" name="button_devices">
           <property name="enabled">
            <bool>true</bool>
           </property>
@@ -283,24 +266,12 @@ border-bottom: 2px solid rgb(130, 130, 130);
             <height>64</height>
            </size>
           </property>
-          <property name="font">
-           <font>
-            <family>Proxima Nova</family>
-            <pointsize>13</pointsize>
-            <weight>50</weight>
-            <italic>false</italic>
-            <bold>false</bold>
-           </font>
-          </property>
-          <property name="styleSheet">
-           <string notr="true"/>
-          </property>
           <property name="text">
-           <string>   Devices</string>
+           <string>MENU_DEVICES</string>
           </property>
           <property name="icon">
            <iconset resource="../rc/resources.qrc">
-            <normaloff>:/icons/images/icons/devices.png</normaloff>:/icons/images/icons/devices.png</iconset>
+            <normaloff>:/icons/images/icons/left_menu/devices.svg</normaloff>:/icons/images/icons/left_menu/devices.svg</iconset>
           </property>
           <property name="iconSize">
            <size>
@@ -313,62 +284,6 @@ border-bottom: 2px solid rgb(130, 130, 130);
           </property>
           <property name="checked">
            <bool>false</bool>
-          </property>
-          <property name="flat">
-           <bool>true</bool>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="button_settings">
-          <property name="enabled">
-           <bool>true</bool>
-          </property>
-          <property name="minimumSize">
-           <size>
-            <width>0</width>
-            <height>64</height>
-           </size>
-          </property>
-          <property name="maximumSize">
-           <size>
-            <width>16777215</width>
-            <height>64</height>
-           </size>
-          </property>
-          <property name="baseSize">
-           <size>
-            <width>0</width>
-            <height>64</height>
-           </size>
-          </property>
-          <property name="font">
-           <font>
-            <family>Proxima Nova</family>
-            <pointsize>13</pointsize>
-            <weight>50</weight>
-            <italic>false</italic>
-            <bold>false</bold>
-           </font>
-          </property>
-          <property name="styleSheet">
-           <string notr="true"/>
-          </property>
-          <property name="text">
-           <string>   Settings</string>
-          </property>
-          <property name="icon">
-           <iconset resource="../rc/resources.qrc">
-            <normaloff>:/icons/images/icons/gear.png</normaloff>:/icons/images/icons/gear.png</iconset>
-          </property>
-          <property name="iconSize">
-           <size>
-            <width>32</width>
-            <height>32</height>
-           </size>
-          </property>
-          <property name="checkable">
-           <bool>true</bool>
           </property>
           <property name="flat">
            <bool>true</bool>
@@ -407,14 +322,14 @@ background-color: rgb(65, 65, 65);
             <widget class="QLabel" name="label_connection_icon">
              <property name="minimumSize">
               <size>
-               <width>45</width>
-               <height>30</height>
+               <width>32</width>
+               <height>24</height>
               </size>
              </property>
              <property name="maximumSize">
               <size>
-               <width>45</width>
-               <height>30</height>
+               <width>32</width>
+               <height>24</height>
               </size>
              </property>
              <property name="text">
@@ -439,7 +354,7 @@ background-color: rgb(65, 65, 65);
               <string notr="true">color: rgb(255, 255, 255);</string>
              </property>
              <property name="text">
-              <string>Disconnected</string>
+              <string>BACKEND_STATE_DISCONNECTED</string>
              </property>
             </widget>
            </item>
@@ -590,7 +505,7 @@ color: rgb(255, 255, 255);
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="button_logout">
+         <widget class="PointingHandButton" name="button_logout">
           <property name="enabled">
            <bool>true</bool>
           </property>
@@ -612,20 +527,8 @@ color: rgb(255, 255, 255);
             <height>64</height>
            </size>
           </property>
-          <property name="font">
-           <font>
-            <family>Proxima Nova</family>
-            <pointsize>13</pointsize>
-            <weight>50</weight>
-            <italic>false</italic>
-            <bold>false</bold>
-           </font>
-          </property>
-          <property name="styleSheet">
-           <string notr="true"/>
-          </property>
           <property name="text">
-           <string>   Log Out</string>
+           <string>BUTTON_LOG_OUT</string>
           </property>
           <property name="icon">
            <iconset resource="../rc/resources.qrc">
@@ -652,6 +555,13 @@ color: rgb(255, 255, 255);
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>PointingHandButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+ </customwidgets>
  <resources>
   <include location="../rc/resources.qrc"/>
  </resources>

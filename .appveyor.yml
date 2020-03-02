@@ -17,15 +17,29 @@ environment:
     - PYTHON: C:\Python36-x64
 
 build_script:
+  # PostgreSQL
   - PATH=C:\Program Files\PostgreSQL\9.6\bin\;%PATH%
   - which pg_config
   - pg_config --version
-  - choco install winfsp -y --version=1.4.19016
+
+  # Winfsp
+  - choco install winfsp -y --pre --version=1.7.20038-pre
+
+  # Winfsp-tests
+  - appveyor DownloadFile https://github.com/billziss-gh/winfsp/releases/download/v1.5/winfsp-tests-1.5.20002.zip -FileName %PYTHON%\Scripts\winfsp-tests.zip
+  - 7z x %PYTHON%\Scripts\winfsp-tests.zip -o%PYTHON%\Scripts\
+
+  # Information
   - git --no-pager log -n2
   - echo %APPVEYOR_REPO_COMMIT%
+
+  # Python
   - SET PATH=%PYTHON%;%PYTHON%\Scripts;;%PATH%
   - python --version
   - python -c "import struct; print(struct.calcsize('P') * 8)"
+  - python misc/releaser.py check
+
+  # Build and install wheel
   - pip install -U wheel
   - python setup.py bdist_wheel
   # TODO: insert a sarcastic comment about lacking wildcard support, powershell
@@ -40,8 +54,19 @@ test_script:
   - cd empty
   # No sed ? Hold my beer !
   - python -c "from pathlib import Path; fd = Path('../setup.cfg'); fd.write_text(fd.read_text().replace('parsec/core/gui/*', 'parsec/core/gui/*,../parsec/core/gui/*'))"
-  - py.test ../tests/gui --cov=parsec --cov-config=../setup.cfg --rungui --log-level=DEBUG -vvv -x
-  - py.test ../tests/ -n 2 --cov=parsec --cov-config=../setup.cfg --runmountpoint --runslow -x --postgresql --log-level=DEBUG -vvv -x
+  - set PYTEST_OPTS=--log-level=DEBUG -vvv -x --cov=parsec --cov-config=../setup.cfg --cov-append
+
+  # Run basic tests
+  - py.test ../tests/ %PYTEST_OPTS%
+  # Run mountpoint tests without parallelism
+  - py.test ../tests/ -m mountpoint --runmountpoint --runslow %PYTEST_OPTS%
+  # Run gui tests without parallelism
+  - py.test ../tests/ -m gui --runmountpoint --runslow --rungui %PYTEST_OPTS%
+  # Run backend tests with parallelism postgresql driver
+  - py.test ../tests/backend ../tests/test_cli.py --postgresql --runslow -n 2 --max-worker-restart=0 %PYTEST_OPTS%
+  # Run slow tests with parallelism with memory driver
+  - py.test ../tests/ -m slow --runslow -n 2 --max-worker-restart=0 %PYTEST_OPTS%
+
 
 on_success:
   - pip install -U --user codecov

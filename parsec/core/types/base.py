@@ -1,82 +1,80 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-import re
-from uuid import UUID
-from typing import NewType
-from pathlib import PurePosixPath
+from typing import Tuple
 
-from parsec.serde import Serializer, fields
-
-__all__ = ("TrustSeed", "AccessID", "EntryName", "EntryNameField", "FsPath")
+from parsec.serde import BaseSchema, MsgpackSerializer
+from parsec.api.data import BaseData, EntryName
 
 
-def serializer_factory(schema_cls):
-    # TODO: add custom exceptions ?
-    return Serializer(schema_cls)
+__all__ = ("BaseLocalData", "FsPath")
 
 
-TrustSeed = NewType("TrustSeed", str)
-AccessID = NewType("AccessID", UUID)
+class BaseLocalData(BaseData):
+    """Unsigned and uncompressed base class for local data"""
+
+    SCHEMA_CLS = BaseSchema
+    SERIALIZER_CLS = MsgpackSerializer
 
 
-class EntryName(str):
-    __slots__ = ()
-    # TODO: This regex is a bit too loose...
-    regex = re.compile(r"^[^/]{1,256}$")
+class FsPath:
+    __slots__ = ("_parts",)
+    """
+    Represent an absolute path to access a resource in the FS.
+
+    FsPath must be initialized with a str representing an absolute path (i.e.
+    with a leading slash). If it countains `.` and/or `..` parts the path will
+    be resolved.
+    """
 
     def __init__(self, raw):
-        if not isinstance(raw, str) or not self.regex.match(raw):
-            raise ValueError("Invalid entry name")
+        if isinstance(raw, FsPath):
+            parts = raw.parts
+        elif isinstance(raw, (list, tuple)):
+            assert all(isinstance(x, EntryName) for x in raw)
+            parts = raw
+        else:
+            parts = []
+            if not raw.startswith("/"):
+                raise ValueError("Path must be absolute")
 
+            for raw_part in raw.split("/"):
+                if raw_part in (".", ""):
+                    continue
+                elif raw_part == "..":
+                    if parts:
+                        parts.pop()
+                    continue
+                else:
+                    parts.append(EntryName(raw_part))
 
-EntryNameField = fields.str_based_field_factory(EntryName)
-TrustSeedField = fields.str_based_field_factory(TrustSeed)
+        self._parts = tuple(parts)
 
+    def __str__(self):
+        return "/" + "/".join(self._parts)
 
-class FsPath(PurePosixPath):
-    @classmethod
-    def _from_parts(cls, args, init=True):
-        self = object.__new__(cls)
-        args = [x.replace("\\", "/") if isinstance(x, str) else x for x in args]
+    def __repr__(self):
+        return f"{type(self).__name__}({str(self)!r})"
 
-        drv, root, parts = PurePosixPath._parse_args(args)
-        if not root:
-            raise ValueError("Path must be absolute")
+    def __truediv__(self, entry):
+        return type(self)([*self._parts, EntryName(entry)])
 
-        if drv:
-            raise ValueError("Path must be Posix style")
-
-        # Posix style root can be `/` or `//` (yeah, this is silly...)
-        root = parts[0] = "/"
-        self._drv = drv
-        self._root = root
-        self._parts = parts
-        if init:
-            self._init()
-        return self
-
-    def is_root(self):
-        return self.parent == self
-
-    # TODO: this method should be removed with the FS class
-    # The concept of workspace path doesn't apply anymore
-
-    def is_workspace(self):
-        return not self.is_root() and self.parent.is_root()
-
-    # TODO: this method should be removed with the FS class
-    # The concept of workspace path doesn't apply anymore
+    def __eq__(self, other):
+        if isinstance(other, FsPath):
+            return self._parts == other.parts
+        else:
+            return NotImplemented
 
     @property
-    def workspace(self):
-        return self.parts[1]
+    def name(self) -> EntryName:
+        return self._parts[-1]
 
-    def walk_from_path(self):
-        parent = None
-        curr = self
-        while curr != parent:
-            yield curr
-            parent, curr = curr, curr.parent
+    @property
+    def parent(self) -> "FsPath":
+        return type(self)(self._parts[:-1])
 
-    def walk_to_path(self):
-        return reversed(list(self.walk_from_path()))
+    def is_root(self) -> bool:
+        return not self._parts
+
+    @property
+    def parts(self) -> Tuple[EntryName, ...]:
+        return self._parts

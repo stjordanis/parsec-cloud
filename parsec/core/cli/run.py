@@ -3,7 +3,9 @@
 import trio
 import click
 from pathlib import Path
+from pendulum import Pendulum, parse as pendulum_parse
 
+from parsec.utils import trio_run
 from parsec.cli_utils import cli_exception_handler, generate_not_available_cmd
 from parsec.core import logged_core_factory
 from parsec.core.cli.utils import core_config_and_device_options, core_config_options
@@ -17,19 +19,21 @@ except ImportError as exc:
 else:
 
     @click.command(short_help="run parsec GUI")
+    # Let the GUI handle the parsing of the url to display dialog on error
+    @click.argument("url", required=False)
     @core_config_options
-    def run_gui(config, **kwargs):
+    def run_gui(config, url, **kwargs):
         """
         Run parsec GUI
         """
         config = config.evolve(mountpoint_enabled=True)
-        _run_gui(config)
+        _run_gui(config, start_arg=url)
 
 
-async def _run_mountpoint(config, device):
+async def _run_mountpoint(config, device, timestamp: Pendulum = None):
     config = config.evolve(mountpoint_enabled=True)
     async with logged_core_factory(config, device) as core:
-        await core.mountpoint_manager.mount_all()
+        await core.mountpoint_manager.mount_all(timestamp)
         display_device = click.style(device.device_id, fg="yellow")
         mountpoint_display = click.style(str(config.mountpoint_base_dir.absolute()), fg="yellow")
         click.echo(f"{display_device}'s drive mounted at {mountpoint_display}")
@@ -40,7 +44,8 @@ async def _run_mountpoint(config, device):
 @click.command(short_help="run parsec mountpoint")
 @core_config_and_device_options
 @click.option("--mountpoint", "-m", type=click.Path(exists=False))
-def run_mountpoint(config, device, mountpoint, **kwargs):
+@click.option("--timestamp", "-t", type=lambda t: pendulum_parse(t, tz="local"))
+def run_mountpoint(config, device, mountpoint, timestamp, **kwargs):
     """
     Expose device's parsec drive on the given mountpoint.
     """
@@ -48,4 +53,4 @@ def run_mountpoint(config, device, mountpoint, **kwargs):
     if mountpoint:
         config = config.evolve(mountpoint_base_dir=Path(mountpoint))
     with cli_exception_handler(config.debug):
-        trio.run(_run_mountpoint, config, device)
+        trio_run(_run_mountpoint, config, device, timestamp)

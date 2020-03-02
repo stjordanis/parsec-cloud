@@ -2,23 +2,24 @@
 
 import pytest
 from unittest.mock import ANY
-from uuid import uuid4
 from pendulum import Pendulum
 
-from parsec.core.types import WorkspaceEntry, WorkspaceRole, ManifestAccess, LocalUserManifest
+from parsec.api.data import UserManifest, WorkspaceEntry
+from parsec.core.types import WorkspaceRole, LocalUserManifest, EntryID
 from parsec.core.fs import (
     FSError,
     FSWorkspaceNotFoundError,
     FSBackendOfflineError,
     FSSharingNotAllowedError,
 )
+from parsec.backend.realm import RealmGrantedRole, RealmRole
 
-from tests.common import freeze_time
+from tests.common import freeze_time, create_shared_workspace
 
 
 @pytest.mark.trio
 async def test_share_unknown(running_backend, alice_user_fs, bob):
-    wid = uuid4()
+    wid = EntryID()
     with pytest.raises(FSWorkspaceNotFoundError):
         await alice_user_fs.workspace_share(wid, bob.user_id, WorkspaceRole.MANAGER)
 
@@ -44,12 +45,13 @@ async def test_share_bad_recipient(running_backend, alice_user_fs, alice, mallor
 
 
 @pytest.mark.trio
-async def test_share_offline(alice_user_fs, bob):
+async def test_share_offline(running_backend, alice_user_fs, bob):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w1")
 
-    with pytest.raises(FSBackendOfflineError):
-        await alice_user_fs.workspace_share(wid, bob.user_id, WorkspaceRole.MANAGER)
+    with running_backend.offline():
+        with pytest.raises(FSBackendOfflineError):
+            await alice_user_fs.workspace_share(wid, bob.user_id, WorkspaceRole.MANAGER)
 
 
 @pytest.mark.trio
@@ -67,14 +69,18 @@ async def test_share_ok(running_backend, alice_user_fs, bob_user_fs, alice, bob,
         with freeze_time("2000-01-03"):
             await bob_user_fs.process_last_messages()
     spy.assert_event_occured(
-        "sharing.granted",
-        kwargs={
+        "sharing.updated",
+        {
             "new_entry": WorkspaceEntry(
                 name="w1 (shared by alice)",
-                access=ManifestAccess(wid, spy.ANY),
-                granted_on=Pendulum(2000, 1, 3),
+                id=wid,
+                key=ANY,
+                encryption_revision=1,
+                encrypted_on=Pendulum(2000, 1, 2),
+                role_cached_on=Pendulum(2000, 1, 3),
                 role=WorkspaceRole.MANAGER,
-            )
+            ),
+            "previous_entry": None,
         },
     )
 
@@ -86,17 +92,13 @@ async def test_share_ok(running_backend, alice_user_fs, bob_user_fs, alice, bob,
     bwe = bum.get_workspace_entry(wid)
 
     assert bwe.name == "w1 (shared by alice)"
-    assert bwe.access == awe.access
+    assert bwe.id == awe.id
     assert bwe.role == WorkspaceRole.MANAGER
 
     aw = alice_user_fs.get_workspace(wid)
     bw = bob_user_fs.get_workspace(wid)
     aw_stat = await aw.path_info("/")
     bw_stat = await bw.path_info("/")
-    # TODO: currently workspace minimal sync in userfs cannot
-    # update need_sync field
-    aw_stat.pop("need_sync")
-    bw_stat.pop("need_sync")
     assert aw_stat == bw_stat
 
 
@@ -124,9 +126,9 @@ async def test_share_workspace_then_rename_it(
     await bw.touch("/ping_bob.txt")
     await aw.mkdir("/ping_alice")
 
-    await bw.sync("/")
-    await aw.sync("/")
-    await bw.sync("/")
+    await bw.sync()
+    await aw.sync()
+    await bw.sync()
 
     aw_stat = await aw.path_info("/")
     bw_stat = await bw.path_info("/")
@@ -148,18 +150,24 @@ async def test_unshare_ok(running_backend, alice_user_fs, bob_user_fs, alice, bo
         with freeze_time("2000-01-03"):
             await alice_user_fs.process_last_messages()
     spy.assert_event_occured(
-        "sharing.revoked",
-        kwargs={
+        "sharing.updated",
+        {
             "new_entry": WorkspaceEntry(
                 name="w1",
-                access=ManifestAccess(wid, spy.ANY),
-                granted_on=Pendulum(2000, 1, 3),
+                id=wid,
+                key=ANY,
+                encryption_revision=1,
+                encrypted_on=Pendulum(2000, 1, 2),
+                role_cached_on=Pendulum(2000, 1, 3),
                 role=None,
             ),
             "previous_entry": WorkspaceEntry(
                 name="w1",
-                access=ManifestAccess(wid, spy.ANY),
-                granted_on=Pendulum(2000, 1, 2),
+                id=wid,
+                key=ANY,
+                encryption_revision=1,
+                encrypted_on=Pendulum(2000, 1, 2),
+                role_cached_on=Pendulum(2000, 1, 2),
                 role=WorkspaceRole.OWNER,
             ),
         },
@@ -211,15 +219,42 @@ async def test_reshare_workspace(running_backend, alice_user_fs, bob_user_fs, al
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w1")
     await alice_user_fs.workspace_share(wid, bob.user_id, WorkspaceRole.MANAGER)
-    await bob_user_fs.process_last_messages()
+    with freeze_time("2000-01-03"):
+        await bob_user_fs.process_last_messages()
 
     # ...and unshare it...
     await alice_user_fs.workspace_share(wid, bob.user_id, None)
-    await bob_user_fs.process_last_messages()
+    with freeze_time("2000-01-04"):
+        await bob_user_fs.process_last_messages()
 
     # ...and re-share it !
     await alice_user_fs.workspace_share(wid, bob.user_id, WorkspaceRole.MANAGER)
-    await bob_user_fs.process_last_messages()
+    with bob_user_fs.event_bus.listen() as spy:
+        with freeze_time("2000-01-05"):
+            await bob_user_fs.process_last_messages()
+    spy.assert_event_occured(
+        "sharing.updated",
+        {
+            "new_entry": WorkspaceEntry(
+                name="w1 (shared by alice)",
+                id=wid,
+                key=ANY,
+                encryption_revision=1,
+                encrypted_on=Pendulum(2000, 1, 2),
+                role_cached_on=Pendulum(2000, 1, 5),
+                role=WorkspaceRole.MANAGER,
+            ),
+            "previous_entry": WorkspaceEntry(
+                name="w1 (shared by alice)",
+                id=wid,
+                key=ANY,
+                encryption_revision=1,
+                encrypted_on=Pendulum(2000, 1, 2),
+                role_cached_on=Pendulum(2000, 1, 4),
+                role=None,
+            ),
+        },
+    )
 
     # Check access
     aum = alice_user_fs.get_user_manifest()
@@ -230,7 +265,7 @@ async def test_reshare_workspace(running_backend, alice_user_fs, bob_user_fs, al
     bw = bum.workspaces[0]
 
     assert bw.name == "w1 (shared by alice)"
-    assert bw.access == aw.access
+    assert bw.id == aw.id
     assert bw.role == WorkspaceRole.MANAGER
 
 
@@ -241,10 +276,23 @@ async def test_share_with_different_role(running_backend, alice_user_fs, bob_use
     aum = alice_user_fs.get_user_manifest()
     aw = aum.workspaces[0]
 
+    previous_entry = None
     for role in WorkspaceRole:
         # (re)share with rights
         await alice_user_fs.workspace_share(wid, bob.user_id, role)
-        await bob_user_fs.process_last_messages()
+        with bob_user_fs.event_bus.listen() as spy:
+            await bob_user_fs.process_last_messages()
+        new_entry = spy.partial_obj(WorkspaceEntry, name="w1 (shared by alice)", id=wid, role=role)
+        if not previous_entry:
+            spy.assert_event_occured(
+                "sharing.updated", {"new_entry": new_entry, "previous_entry": None}
+            )
+
+        else:
+            spy.assert_event_occured(
+                "sharing.updated", {"new_entry": new_entry, "previous_entry": previous_entry}
+            )
+        previous_entry = new_entry
 
         # Check access
         bum = bob_user_fs.get_user_manifest()
@@ -252,7 +300,7 @@ async def test_share_with_different_role(running_backend, alice_user_fs, bob_use
         bw = bum.workspaces[0]
 
         assert bw.name == "w1 (shared by alice)"
-        assert bw.access == aw.access
+        assert bw.id == aw.id
         assert bw.role == role
 
 
@@ -260,19 +308,38 @@ async def test_share_with_different_role(running_backend, alice_user_fs, bob_use
 async def test_share_no_manager_right(running_backend, alice_user_fs, alice, bob):
     with freeze_time("2000-01-02"):
         wid = await alice_user_fs.workspace_create("w1")
-    await alice_user_fs.sync()
+        await alice_user_fs.sync()
 
     # Drop manager right (and give to Bob the ownership)
-    await running_backend.backend.vlob.update_group_roles(
-        alice.organization_id, alice.user_id, wid, bob.user_id, role=WorkspaceRole.OWNER
+    await running_backend.backend.realm.update_roles(
+        alice.organization_id,
+        RealmGrantedRole(
+            realm_id=wid,
+            user_id=bob.user_id,
+            certificate=b"<dummy>",
+            role=RealmRole.OWNER,
+            granted_by=alice.device_id,
+            granted_on=Pendulum(2000, 1, 3),
+        ),
     )
-    await running_backend.backend.vlob.update_group_roles(
-        alice.organization_id, bob.user_id, wid, alice.user_id, role=WorkspaceRole.CONTRIBUTOR
+    await running_backend.backend.realm.update_roles(
+        alice.organization_id,
+        RealmGrantedRole(
+            realm_id=wid,
+            user_id=alice.user_id,
+            certificate=b"<dummy>",
+            role=RealmRole.CONTRIBUTOR,
+            granted_by=bob.device_id,
+            granted_on=Pendulum(2000, 1, 4),
+        ),
     )
 
     with pytest.raises(FSSharingNotAllowedError) as exc:
         await alice_user_fs.workspace_share(wid, bob.user_id, WorkspaceRole.MANAGER)
-    assert exc.value.args == ("Must be Owner or Manager on the workspace is mandatory to share it",)
+    assert (
+        exc.value.message
+        == "Must be Owner or Manager on the workspace is mandatory to share it: {'status': 'not_allowed'}"
+    )
 
 
 @pytest.mark.trio
@@ -283,8 +350,7 @@ async def test_share_with_sharing_name_already_taken(
     with freeze_time("2000-01-01"):
         awid = await alice_user_fs.workspace_create("w")
         bwid = await bob_user_fs.workspace_create("w")
-        # bw2id = await bob_user_fs.workspace_create("w (shared by alice)")
-        await bob_user_fs.workspace_create("w (shared by alice)")
+        bw2id = await bob_user_fs.workspace_create("w (shared by alice)")
 
     # Sharing them shouldn't be a trouble
     await bob_user_fs.sync()
@@ -295,14 +361,18 @@ async def test_share_with_sharing_name_already_taken(
         with freeze_time("2000-01-02"):
             await bob_user_fs.process_last_messages()
     spy.assert_event_occured(
-        "sharing.granted",
-        kwargs={
+        "sharing.updated",
+        {
             "new_entry": WorkspaceEntry(
                 name="w (shared by alice)",
-                access=ManifestAccess(awid, spy.ANY),
-                granted_on=Pendulum(2000, 1, 2),
+                id=awid,
+                key=ANY,
+                encryption_revision=1,
+                encrypted_on=Pendulum(2000, 1, 1),
+                role_cached_on=Pendulum(2000, 1, 2),
                 role=WorkspaceRole.MANAGER,
-            )
+            ),
+            "previous_entry": None,
         },
     )
 
@@ -316,10 +386,8 @@ async def test_share_with_sharing_name_already_taken(
 
     b_bw_stat = await bob_user_fs.get_workspace(bwid).path_info("/")
     assert b_bw_stat["id"] == bwid
-    # TODO: currently workspaces with same name shadow each other
-    # should be solve once legacy FS class is dropped
-    # b_bw2_stat = await bob_user_fs.get_workspace(bw2id).stat("/")
-    # assert b_bw2_stat["id"] == bw2id
+    b_bw2_stat = await bob_user_fs.get_workspace(bw2id).path_info("/")
+    assert b_bw2_stat["id"] == bw2id
 
 
 @pytest.mark.trio
@@ -328,59 +396,77 @@ async def test_share_workspace_then_conflict_on_rights(
     running_backend, alice_user_fs, alice2_user_fs, bob_user_fs, alice, alice2, bob, first_to_sync
 ):
     # Bob shares a workspace with Alice...
-    wid = await bob_user_fs.workspace_create("w")
-    await bob_user_fs.workspace_share(wid, alice.user_id, WorkspaceRole.MANAGER)
+    with freeze_time("2000-01-01"):
+        wid = await bob_user_fs.workspace_create("w")
+    with freeze_time("2000-01-02"):
+        await bob_user_fs.workspace_share(wid, alice.user_id, WorkspaceRole.MANAGER)
 
     # ...but only Alice's first device get the information
-    with freeze_time("2000-01-02"):
+    with freeze_time("2000-01-03"):
         await alice_user_fs.process_last_messages()
 
     # Now Bob change the sharing rights...
-    await bob_user_fs.workspace_share(wid, alice.user_id, WorkspaceRole.CONTRIBUTOR)
+    with freeze_time("2000-01-04"):
+        await bob_user_fs.workspace_share(wid, alice.user_id, WorkspaceRole.CONTRIBUTOR)
 
     # ...this time it's Alice's second device which get the info
-    with freeze_time("2000-01-03"):
+    with freeze_time("2000-01-05"):
+        # Note we will process the 2 sharing messages bob sent us, this
+        # will attribute role_cached_on to the first message timestamp even
+        # if we cache the second message role...
         await alice2_user_fs.process_last_messages()
 
-    if first_to_sync == "alice2":
+    if first_to_sync == "alice":
         first = alice_user_fs
         second = alice2_user_fs
+        synced_timestamp = Pendulum(2000, 1, 7)
         synced_version = 3
     else:
         first = alice2_user_fs
         second = alice_user_fs
+        synced_timestamp = Pendulum(2000, 1, 6)
         synced_version = 2
 
     # Finally Alice devices try to reconciliate
-    with freeze_time("2000-01-04"):
+    with freeze_time("2000-01-06"):
         await first.sync()
-    with freeze_time("2000-01-05"):
+    with freeze_time("2000-01-07"):
         await second.sync()
     # Resync first device to get changes from the 2nd
-    with freeze_time("2000-01-06"):
+    with freeze_time("2000-01-08"):
         await first.sync()
 
     am = alice_user_fs.get_user_manifest()
     a2m = alice2_user_fs.get_user_manifest()
-    expected = LocalUserManifest(
-        author=alice.device_id,
+    expected_remote = UserManifest(
+        author=alice2.device_id,
+        timestamp=synced_timestamp,
+        id=alice2.user_manifest_id,
+        version=synced_version,
         created=Pendulum(2000, 1, 1),
-        updated=Pendulum(2000, 1, 3),
-        base_version=synced_version,
-        need_sync=False,
-        is_placeholder=False,
+        updated=Pendulum(2000, 1, 5),
         last_processed_message=2,
         workspaces=(
             WorkspaceEntry(
                 name="w (shared by bob)",
-                access=ManifestAccess(wid, ANY),
-                granted_on=Pendulum(2000, 1, 3),
+                id=wid,
+                key=ANY,
+                encryption_revision=1,
+                encrypted_on=Pendulum(2000, 1, 1),
+                role_cached_on=Pendulum(2000, 1, 5),
                 role=WorkspaceRole.CONTRIBUTOR,
             ),
         ),
     )
+    expected = LocalUserManifest(
+        base=expected_remote,
+        need_sync=False,
+        updated=expected_remote.updated,
+        last_processed_message=expected_remote.last_processed_message,
+        workspaces=expected_remote.workspaces,
+    )
     assert am == expected
-    assert a2m == expected.evolve(author=alice2.device_id)
+    assert a2m == expected
 
     a_w = alice_user_fs.get_workspace(wid)
     a2_w = alice2_user_fs.get_workspace(wid)
@@ -405,8 +491,133 @@ async def test_share_workspace_then_conflict_on_rights(
 
     assert a_w_entry == WorkspaceEntry(
         name=f"w (shared by {bob.user_id})",
-        access=ManifestAccess(id=wid, key=ANY),
-        granted_on=Pendulum(2000, 1, 3),
+        id=wid,
+        key=ANY,
+        encryption_revision=1,
+        encrypted_on=Pendulum(2000, 1, 1),
+        role_cached_on=Pendulum(2000, 1, 5),
         role=WorkspaceRole.CONTRIBUTOR,
     )
     assert a2_w_entry == a_w_entry
+
+
+@pytest.mark.trio
+async def test_sharing_events_triggered_on_sync(
+    running_backend, alice_user_fs, alice2_user_fs, bob_user_fs, alice, bob
+):
+    # Share a first workspace
+    with freeze_time("2000-01-02"):
+        wid = await create_shared_workspace("w", bob_user_fs, alice_user_fs)
+
+    with alice2_user_fs.event_bus.listen() as spy:
+        await alice2_user_fs.sync()
+    expected_entry_v1 = WorkspaceEntry(
+        name="w (shared by bob)",
+        id=wid,
+        key=ANY,
+        encryption_revision=1,
+        encrypted_on=Pendulum(2000, 1, 2),
+        role_cached_on=Pendulum(2000, 1, 2),
+        role=WorkspaceRole.MANAGER,
+    )
+    spy.assert_event_occured(
+        "sharing.updated", {"new_entry": expected_entry_v1, "previous_entry": None}
+    )
+
+    # Change role
+    await bob_user_fs.workspace_share(wid, alice.user_id, WorkspaceRole.OWNER)
+    with freeze_time("2000-01-03"):
+        await alice_user_fs.process_last_messages()
+    await alice_user_fs.sync()
+
+    with alice2_user_fs.event_bus.listen() as spy:
+        await alice2_user_fs.sync()
+    expected_entry_v2 = WorkspaceEntry(
+        name="w (shared by bob)",
+        id=wid,
+        key=ANY,
+        encryption_revision=1,
+        encrypted_on=Pendulum(2000, 1, 2),
+        role_cached_on=Pendulum(2000, 1, 3),
+        role=WorkspaceRole.OWNER,
+    )
+    spy.assert_event_occured(
+        "sharing.updated", {"new_entry": expected_entry_v2, "previous_entry": expected_entry_v1}
+    )
+
+    # Revoke
+    await bob_user_fs.workspace_share(wid, alice.user_id, None)
+    with freeze_time("2000-01-04"):
+        await alice_user_fs.process_last_messages()
+    await alice_user_fs.sync()
+
+    with alice2_user_fs.event_bus.listen() as spy:
+        await alice2_user_fs.sync()
+    expected_entry_v3 = WorkspaceEntry(
+        name="w (shared by bob)",
+        id=wid,
+        key=ANY,
+        encryption_revision=1,
+        encrypted_on=Pendulum(2000, 1, 2),
+        role_cached_on=Pendulum(2000, 1, 4),
+        role=None,
+    )
+    spy.assert_event_occured(
+        "sharing.updated", {"new_entry": expected_entry_v3, "previous_entry": expected_entry_v2}
+    )
+
+
+@pytest.mark.trio
+async def test_no_sharing_event_on_sync_on_unknown_workspace(
+    running_backend, alice_user_fs, alice2_user_fs, bob_user_fs, alice, bob
+):
+    # Share a workspace...
+    wid = await create_shared_workspace("w", bob_user_fs, alice_user_fs)
+
+    # ...and unshare it before alice2 even know about it
+    await bob_user_fs.workspace_share(wid, alice.user_id, None)
+    await alice_user_fs.process_last_messages()
+    await alice_user_fs.sync()
+
+    # No sharing event should be triggered !
+    with alice2_user_fs.event_bus.listen() as spy:
+        await alice2_user_fs.sync()
+    spy.assert_events_exactly_occured(["fs.entry.remote_changed"])
+
+
+@pytest.mark.trio
+async def test_sharing_event_on_sync_if_same_role(
+    running_backend, alice_user_fs, alice2_user_fs, bob_user_fs, alice, bob
+):
+    # Share a workspace, alice2 knows about it
+    with freeze_time("2000-01-02"):
+        wid = await create_shared_workspace("w", bob_user_fs, alice_user_fs, alice2_user_fs)
+    expected_entry_v1 = WorkspaceEntry(
+        name="w (shared by bob)",
+        id=wid,
+        key=ANY,
+        encryption_revision=1,
+        encrypted_on=Pendulum(2000, 1, 2),
+        role_cached_on=Pendulum(2000, 1, 2),
+        role=WorkspaceRole.MANAGER,
+    )
+
+    # Then change alice's role...
+    await bob_user_fs.workspace_share(wid, alice.user_id, WorkspaceRole.OWNER)
+    with freeze_time("2000-01-03"):
+        await alice_user_fs.process_last_messages()
+    await alice_user_fs.sync()
+
+    # ...and give back alice the same role
+    await bob_user_fs.workspace_share(wid, alice.user_id, WorkspaceRole.MANAGER)
+    with freeze_time("2000-01-04"):
+        await alice_user_fs.process_last_messages()
+    expected_entry_v3 = expected_entry_v1.evolve(role_cached_on=Pendulum(2000, 1, 4))
+    await alice_user_fs.sync()
+
+    # A single sharing event should be triggered
+    with alice2_user_fs.event_bus.listen() as spy:
+        await alice2_user_fs.sync()
+    spy.assert_event_occured(
+        "sharing.updated", {"new_entry": expected_entry_v3, "previous_entry": expected_entry_v1}
+    )

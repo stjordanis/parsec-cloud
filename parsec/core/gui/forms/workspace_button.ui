@@ -6,20 +6,20 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
-    <height>300</height>
+    <width>350</width>
+    <height>307</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>300</width>
-    <height>300</height>
+    <width>350</width>
+    <height>307</height>
    </size>
   </property>
   <property name="maximumSize">
    <size>
-    <width>400</width>
-    <height>327</height>
+    <width>350</width>
+    <height>307</height>
    </size>
   </property>
   <property name="font">
@@ -30,8 +30,14 @@
   <property name="windowTitle">
    <string>Form</string>
   </property>
+  <property name="accessibleDescription">
+   <string/>
+  </property>
   <property name="styleSheet">
-   <string notr="true">QWidget#WorkspaceButton{background-color: #FFFFFF;}</string>
+   <string notr="true">#WorkspaceButton
+{
+background-color: #FFFFFF;
+}</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
@@ -52,7 +58,12 @@
    <item>
     <widget class="QWidget" name="widget" native="true">
      <property name="styleSheet">
-      <string notr="true">QWidget#widget
+      <string notr="true">QLabel#label_reencrypt
+{
+color: rgb(12, 65, 157);
+}
+
+QWidget#widget
 {
 border: 2px solid rgb(47, 145, 208);
 }
@@ -72,6 +83,11 @@ QToolTip
 background-color: rgb(46, 146, 208);
 border: 1px solid rgb(12, 65, 157);
 color: rgb(255, 255, 255);
+}
+
+Line
+{
+color: rgb(9, 66, 155);
 }</string>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout_3">
@@ -79,16 +95,16 @@ color: rgb(255, 255, 255);
        <number>10</number>
       </property>
       <property name="leftMargin">
-       <number>20</number>
+       <number>10</number>
       </property>
       <property name="topMargin">
-       <number>20</number>
+       <number>10</number>
       </property>
       <property name="rightMargin">
-       <number>20</number>
+       <number>10</number>
       </property>
       <property name="bottomMargin">
-       <number>20</number>
+       <number>10</number>
       </property>
       <item>
        <layout class="QHBoxLayout" name="horizontalLayout_3">
@@ -157,13 +173,13 @@ color: rgb(255, 255, 255);
            </size>
           </property>
           <property name="toolTip">
-           <string>You are this workspace's owner.</string>
+           <string>LABEL_WORKSPACE_OWNER</string>
           </property>
           <property name="text">
            <string/>
           </property>
           <property name="pixmap">
-           <pixmap resource="../rc/resources.qrc">:/icons/images/icons/owner.png</pixmap>
+           <pixmap>:/icons/images/icons/owner.png</pixmap>
           </property>
           <property name="scaledContents">
            <bool>true</bool>
@@ -185,13 +201,13 @@ color: rgb(255, 255, 255);
            </size>
           </property>
           <property name="toolTip">
-           <string>This workspace is shared.</string>
+           <string>LABEL_WORKSPACE_SHARED</string>
           </property>
           <property name="text">
            <string/>
           </property>
           <property name="pixmap">
-           <pixmap resource="../rc/resources.qrc">:/icons/images/icons/share_info.png</pixmap>
+           <pixmap>:/icons/images/icons/share_info.png</pixmap>
           </property>
           <property name="scaledContents">
            <bool>true</bool>
@@ -219,39 +235,26 @@ color: rgb(255, 255, 255);
       <item>
        <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
-         <widget class="QToolButton" name="button_open_workspace">
+         <widget class="QLabel" name="label">
           <property name="minimumSize">
            <size>
-            <width>78</width>
-            <height>78</height>
+            <width>75</width>
+            <height>75</height>
            </size>
           </property>
           <property name="maximumSize">
            <size>
-            <width>78</width>
-            <height>78</height>
+            <width>75</width>
+            <height>75</height>
            </size>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">QToolButton#button_open_workspace:hover
-{
-border: 0;
-}</string>
           </property>
           <property name="text">
-           <string>...</string>
+           <string/>
           </property>
-          <property name="icon">
-           <iconset resource="../rc/resources.qrc">
-            <normaloff>:/icons/images/icons/workspace.png</normaloff>:/icons/images/icons/workspace.png</iconset>
+          <property name="pixmap">
+           <pixmap>:/icons/images/icons/workspace.png</pixmap>
           </property>
-          <property name="iconSize">
-           <size>
-            <width>78</width>
-            <height>78</height>
-           </size>
-          </property>
-          <property name="autoRaise">
+          <property name="scaledContents">
            <bool>true</bool>
           </property>
          </widget>
@@ -275,7 +278,7 @@ border: 0;
              </font>
             </property>
             <property name="text">
-             <string>This workspace is empty.</string>
+             <string>LABEL_WORKSPACE_EMPTY</string>
             </property>
            </widget>
           </item>
@@ -298,18 +301,15 @@ border: 0;
               <number>0</number>
              </property>
              <item>
-              <widget class="FileLineEdit" name="line_edit_file1">
-               <property name="font">
-                <font>
-                 <pointsize>11</pointsize>
-                 <underline>false</underline>
-                </font>
+              <widget class="FileLabel" name="label_file1">
+               <property name="text">
+                <string/>
                </property>
-               <property name="styleSheet">
-                <string notr="true"/>
+               <property name="textFormat">
+                <enum>Qt::PlainText</enum>
                </property>
-               <property name="readOnly">
-                <bool>true</bool>
+               <property name="textInteractionFlags">
+                <set>Qt::NoTextInteraction</set>
                </property>
               </widget>
              </item>
@@ -330,18 +330,15 @@ border: 0;
               </widget>
              </item>
              <item>
-              <widget class="FileLineEdit" name="line_edit_file2">
-               <property name="font">
-                <font>
-                 <pointsize>11</pointsize>
-                 <underline>false</underline>
-                </font>
+              <widget class="FileLabel" name="label_file2">
+               <property name="text">
+                <string/>
                </property>
-               <property name="styleSheet">
-                <string notr="true"/>
+               <property name="textFormat">
+                <enum>Qt::PlainText</enum>
                </property>
-               <property name="readOnly">
-                <bool>true</bool>
+               <property name="textInteractionFlags">
+                <set>Qt::NoTextInteraction</set>
                </property>
               </widget>
              </item>
@@ -362,18 +359,15 @@ border: 0;
               </widget>
              </item>
              <item>
-              <widget class="FileLineEdit" name="line_edit_file3">
-               <property name="font">
-                <font>
-                 <pointsize>11</pointsize>
-                 <underline>false</underline>
-                </font>
+              <widget class="FileLabel" name="label_file3">
+               <property name="text">
+                <string/>
                </property>
-               <property name="styleSheet">
-                <string notr="true"/>
+               <property name="textFormat">
+                <enum>Qt::PlainText</enum>
                </property>
-               <property name="readOnly">
-                <bool>true</bool>
+               <property name="textInteractionFlags">
+                <set>Qt::NoTextInteraction</set>
                </property>
               </widget>
              </item>
@@ -394,18 +388,15 @@ border: 0;
               </widget>
              </item>
              <item>
-              <widget class="FileLineEdit" name="line_edit_file4">
-               <property name="font">
-                <font>
-                 <pointsize>11</pointsize>
-                 <underline>false</underline>
-                </font>
+              <widget class="FileLabel" name="label_file4">
+               <property name="text">
+                <string/>
                </property>
-               <property name="styleSheet">
-                <string notr="true"/>
+               <property name="textFormat">
+                <enum>Qt::PlainText</enum>
                </property>
-               <property name="readOnly">
-                <bool>true</bool>
+               <property name="textInteractionFlags">
+                <set>Qt::NoTextInteraction</set>
                </property>
               </widget>
              </item>
@@ -415,7 +406,7 @@ border: 0;
           <item>
            <layout class="QHBoxLayout" name="horizontalLayout_2">
             <property name="spacing">
-             <number>0</number>
+             <number>5</number>
             </property>
             <property name="topMargin">
              <number>10</number>
@@ -434,7 +425,7 @@ border: 0;
              </spacer>
             </item>
             <item>
-             <widget class="QPushButton" name="button_rename">
+             <widget class="PointingHandButton" name="button_rename">
               <property name="minimumSize">
                <size>
                 <width>32</width>
@@ -448,7 +439,7 @@ border: 0;
                </size>
               </property>
               <property name="toolTip">
-               <string>Rename the workspace</string>
+               <string>LABEL_RENAME_WORKSPACE</string>
               </property>
               <property name="styleSheet">
                <string notr="true">QPushButton#button_rename
@@ -460,7 +451,7 @@ border: 0;
                <string/>
               </property>
               <property name="icon">
-               <iconset resource="../rc/resources.qrc">
+               <iconset>
                 <normaloff>:/icons/images/icons/edit_blue.png</normaloff>:/icons/images/icons/edit_blue.png</iconset>
               </property>
               <property name="iconSize">
@@ -489,10 +480,7 @@ border: 0;
                </size>
               </property>
               <property name="styleSheet">
-               <string notr="true">Line#line_7
-{
-color: rgb(9, 66, 155);
-}</string>
+               <string notr="true"/>
               </property>
               <property name="frameShadow">
                <enum>QFrame::Plain</enum>
@@ -503,7 +491,7 @@ color: rgb(9, 66, 155);
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="button_share">
+             <widget class="PointingHandButton" name="button_share">
               <property name="minimumSize">
                <size>
                 <width>32</width>
@@ -517,7 +505,7 @@ color: rgb(9, 66, 155);
                </size>
               </property>
               <property name="toolTip">
-               <string>Share the workspace</string>
+               <string>LABEL_SHARE_WORKSPACE</string>
               </property>
               <property name="statusTip">
                <string/>
@@ -532,7 +520,7 @@ border: 0;
                <string/>
               </property>
               <property name="icon">
-               <iconset resource="../rc/resources.qrc">
+               <iconset>
                 <normaloff>:/icons/images/icons/share_workspace.png</normaloff>:/icons/images/icons/share_workspace.png</iconset>
               </property>
               <property name="iconSize">
@@ -547,7 +535,7 @@ border: 0;
              </widget>
             </item>
             <item>
-             <widget class="Line" name="line_6">
+             <widget class="Line" name="line_8">
               <property name="maximumSize">
                <size>
                 <width>16777215</width>
@@ -555,10 +543,7 @@ border: 0;
                </size>
               </property>
               <property name="styleSheet">
-               <string notr="true">Line#line_6
-{
-color: rgb(9, 66, 155);
-}</string>
+               <string notr="true"/>
               </property>
               <property name="frameShadow">
                <enum>QFrame::Plain</enum>
@@ -569,7 +554,7 @@ color: rgb(9, 66, 155);
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="button_delete">
+             <widget class="PointingHandButton" name="button_remount_ts">
               <property name="minimumSize">
                <size>
                 <width>32</width>
@@ -583,7 +568,146 @@ color: rgb(9, 66, 155);
                </size>
               </property>
               <property name="toolTip">
-               <string>Delete the workspace</string>
+               <string>LABEL_MOUNT_TIMESTAMP</string>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+              <property name="icon">
+               <iconset>
+                <normaloff>:/icons/images/icons/go-back_workspace.png</normaloff>:/icons/images/icons/go-back_workspace.png</iconset>
+              </property>
+              <property name="iconSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="flat">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="Line" name="line_5">
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>17</height>
+               </size>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Plain</enum>
+              </property>
+              <property name="orientation">
+               <enum>Qt::Vertical</enum>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="PointingHandButton" name="button_reencrypt">
+              <property name="minimumSize">
+               <size>
+                <width>32</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>32</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>LABEL_ENCRYPT_WORKSPACE</string>
+              </property>
+              <property name="statusTip">
+               <string/>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">QPushButton#button_reencrypt
+{
+border: 0;
+}</string>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+              <property name="icon">
+               <iconset>
+                <normaloff>:/icons/images/icons/warning.png</normaloff>:/icons/images/icons/warning.png</iconset>
+              </property>
+              <property name="iconSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="flat">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_reencrypt">
+              <property name="minimumSize">
+               <size>
+                <width>32</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>32</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>LABEL_REENCRYPTION_PROGRESS</string>
+              </property>
+              <property name="styleSheet">
+               <string notr="true"/>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="Line" name="line_6">
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>17</height>
+               </size>
+              </property>
+              <property name="styleSheet">
+               <string notr="true"/>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Plain</enum>
+              </property>
+              <property name="orientation">
+               <enum>Qt::Vertical</enum>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="PointingHandButton" name="button_delete">
+              <property name="minimumSize">
+               <size>
+                <width>32</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>32</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>LABEL_DELETE_WORKSPACE</string>
               </property>
               <property name="statusTip">
                <string/>
@@ -598,7 +722,7 @@ border: 0;
                <string/>
               </property>
               <property name="icon">
-               <iconset resource="../rc/resources.qrc">
+               <iconset>
                 <normaloff>:/icons/images/icons/garbage_workspace.png</normaloff>:/icons/images/icons/garbage_workspace.png</iconset>
               </property>
               <property name="iconSize">
@@ -625,13 +749,16 @@ border: 0;
  </widget>
  <customwidgets>
   <customwidget>
-   <class>FileLineEdit</class>
-   <extends>QLineEdit</extends>
+   <class>PointingHandButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>FileLabel</class>
+   <extends>QLabel</extends>
    <header>parsec.core.gui.custom_widgets</header>
   </customwidget>
  </customwidgets>
- <resources>
-  <include location="../rc/resources.qrc"/>
- </resources>
+ <resources/>
  <connections/>
 </ui>

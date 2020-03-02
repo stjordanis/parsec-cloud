@@ -93,7 +93,7 @@ color: rgb(46, 46, 46);</string>
         <string/>
        </property>
        <property name="placeholderText">
-        <string>Search users</string>
+        <string>LABEL_SEARCH_USERS</string>
        </property>
       </widget>
      </item>
@@ -133,7 +133,27 @@ border: 0;
      <item>
       <widget class="QScrollArea" name="scroll_area">
        <property name="styleSheet">
-        <string notr="true">background-color: rgb(255, 255, 255);</string>
+        <string notr="true">#scroll_area
+{
+background-color: rgb(255, 255, 255);
+border: 1px solid rgb(46, 46, 46);
+}
+
+QScrollBar:vertical
+{
+background: rgb(255, 255, 255);
+}
+
+QScrollBar::handle:vertical
+{
+background: rgb(46, 46, 46);
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical
+{
+border: none;
+background: none;
+}</string>
        </property>
        <property name="frameShape">
         <enum>QFrame::NoFrame</enum>
@@ -144,24 +164,46 @@ border: 0;
        <property name="lineWidth">
         <number>0</number>
        </property>
+       <property name="verticalScrollBarPolicy">
+        <enum>Qt::ScrollBarAsNeeded</enum>
+       </property>
        <property name="horizontalScrollBarPolicy">
         <enum>Qt::ScrollBarAlwaysOff</enum>
        </property>
        <property name="widgetResizable">
         <bool>true</bool>
        </property>
-       <widget class="QWidget" name="scrollAreaWidgetContents_2">
+       <widget class="QWidget" name="widget_content">
         <property name="geometry">
          <rect>
           <x>0</x>
           <y>0</y>
-          <width>499</width>
-          <height>451</height>
+          <width>497</width>
+          <height>449</height>
          </rect>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">#widget_content
+{
+background-color: rgb(255, 255, 255);
+}</string>
         </property>
         <layout class="QVBoxLayout" name="verticalLayout_4">
          <item>
-          <layout class="QGridLayout" name="layout_users"/>
+          <layout class="QVBoxLayout" name="layout_content">
+           <property name="leftMargin">
+            <number>20</number>
+           </property>
+           <property name="topMargin">
+            <number>20</number>
+           </property>
+           <property name="rightMargin">
+            <number>20</number>
+           </property>
+           <property name="bottomMargin">
+            <number>20</number>
+           </property>
+          </layout>
          </item>
         </layout>
        </widget>

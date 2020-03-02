@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>362</width>
-    <height>185</height>
+    <height>221</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -20,9 +20,9 @@
    <string>Dialog</string>
   </property>
   <property name="styleSheet">
-   <string notr="true">QPushButton:pressed
+   <string notr="true">QLabel
 {
-border: 0;
+color: rgb(12, 65, 157);
 }</string>
   </property>
   <property name="modal">
@@ -100,7 +100,7 @@ background-color: rgb(255, 255, 255);
          </spacer>
         </item>
         <item>
-         <widget class="QPushButton" name="button_close">
+         <widget class="PointingHandButton" name="button_close">
           <property name="minimumSize">
            <size>
             <width>20</width>
@@ -113,11 +113,18 @@ background-color: rgb(255, 255, 255);
             <height>20</height>
            </size>
           </property>
+          <property name="styleSheet">
+           <string notr="true">#button_close
+{
+background-color: rgb(255, 255, 255);
+border: 0;
+}</string>
+          </property>
           <property name="text">
            <string/>
           </property>
           <property name="icon">
-           <iconset resource="../rc/resources.qrc">
+           <iconset>
             <normaloff>:/icons/images/icons/menu_cancel.png</normaloff>:/icons/images/icons/menu_cancel.png</iconset>
           </property>
           <property name="iconSize">
@@ -150,9 +157,6 @@ background-color: rgb(255, 255, 255);
             <bold>true</bold>
            </font>
           </property>
-          <property name="styleSheet">
-           <string notr="true">color: rgb(12, 65, 157);</string>
-          </property>
           <property name="text">
            <string/>
           </property>
@@ -166,11 +170,11 @@ background-color: rgb(255, 255, 255);
             <verstretch>0</verstretch>
            </sizepolicy>
           </property>
-          <property name="styleSheet">
-           <string notr="true">color: rgb(12, 65, 157);</string>
-          </property>
           <property name="text">
            <string/>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
           </property>
          </widget>
         </item>
@@ -227,36 +231,25 @@ padding-left: 10px;</string>
          </spacer>
         </item>
         <item>
-         <widget class="QPushButton" name="button_ok">
+         <widget class="ShadowedButton" name="button_ok">
           <property name="minimumSize">
            <size>
-            <width>0</width>
+            <width>64</width>
             <height>32</height>
            </size>
           </property>
           <property name="font">
            <font>
             <pointsize>12</pointsize>
-            <weight>75</weight>
-            <bold>true</bold>
+            <weight>50</weight>
+            <bold>false</bold>
            </font>
           </property>
           <property name="layoutDirection">
            <enum>Qt::RightToLeft</enum>
           </property>
-          <property name="styleSheet">
-           <string notr="true">background-color: rgb(45, 144, 209);
-border: 1px solid rgb(11, 56, 166);
-color: rgb(255, 255, 255);
-padding-left: 10px;
-padding-right: 10px;</string>
-          </property>
           <property name="text">
-           <string>Ok</string>
-          </property>
-          <property name="icon">
-           <iconset resource="../rc/resources.qrc">
-            <normaloff>:/icons/images/icons/checked_white.png</normaloff>:/icons/images/icons/checked_white.png</iconset>
+           <string>BUTTON_OK</string>
           </property>
           <property name="iconSize">
            <size>
@@ -273,9 +266,19 @@ padding-right: 10px;</string>
    </item>
   </layout>
  </widget>
- <resources>
-  <include location="../rc/resources.qrc"/>
- </resources>
+ <customwidgets>
+  <customwidget>
+   <class>PointingHandButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>ShadowedButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
  <connections>
   <connection>
    <sender>button_close</sender>

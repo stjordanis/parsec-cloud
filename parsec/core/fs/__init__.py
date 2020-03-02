@@ -2,31 +2,82 @@
 
 from parsec.core.fs.userfs import UserFS
 from parsec.core.fs.exceptions import (
+    # Generic classes
     FSError,
-    FSValidationError,
-    FSPackingError,
+    FSOperationError,
+    FSLocalOperationError,
+    FSRemoteOperationError,
+    # Misc errors
     FSWorkspaceNotFoundError,
+    FSWorkspaceTimestampedTooEarly,
+    # Local operation errors
+    FSPermissionError,
+    FSNoAccessError,
+    FSReadOnlyError,
+    FSNotADirectoryError,
+    FSFileNotFoundError,
+    FSCrossDeviceError,
+    FSFileExistsError,
+    FSIsADirectoryError,
+    FSDirectoryNotEmptyError,
+    FSInvalidFileDescriptor,
+    FSInvalidArgumentError,
+    FSEndOfFileError,
+    # Remote operation errors
     FSBackendOfflineError,
+    FSRemoteManifestNotFound,
+    FSRemoteManifestNotFoundBadVersion,
+    FSRemoteManifestNotFoundBadTimestamp,
+    FSRemoteBlockNotFound,
+    FSRemoteSyncError,
+    FSBadEncryptionRevision,
     FSSharingNotAllowedError,
+    FSWorkspaceNoAccess,
+    FSWorkspaceNoReadAccess,
+    FSWorkspaceNoWriteAccess,
+    FSWorkspaceNotInMaintenance,
+    FSWorkspaceInMaintenance,
 )
-from parsec.core.fs.fs import FS
-from parsec.core.fs.workspacefs import WorkspaceFS, FSInvalidFileDescriptor
-from parsec.core.fs.local_folder_fs import FSManifestLocalMiss, FSEntryNotFound
-from parsec.core.fs.sync_base import SyncConcurrencyError
+from parsec.core.fs.workspacefs import WorkspaceFS, WorkspaceFSTimestamped
 
 
 __all__ = (
     "UserFS",
-    "FSError",
-    "FSValidationError",
-    "FSPackingError",
-    "FSWorkspaceNotFoundError",
-    "FSBackendOfflineError",
-    "FSSharingNotAllowedError",
-    "FS",
-    "FSManifestLocalMiss",
-    "FSEntryNotFound",
-    "FSInvalidFileDescriptor",
-    "SyncConcurrencyError",
     "WorkspaceFS",
+    "WorkspaceFSTimestamped",
+    # Generic error classes
+    "FSError",
+    "FSOperationError",
+    "FSLocalOperationError",
+    "FSRemoteOperationError",
+    # Misc errors
+    "FSWorkspaceNotFoundError",
+    "FSWorkspaceTimestampedTooEarly",
+    # Local operation errors
+    "FSPermissionError",
+    "FSNoAccessError",
+    "FSReadOnlyError",
+    "FSNotADirectoryError",
+    "FSFileNotFoundError",
+    "FSCrossDeviceError",
+    "FSFileExistsError",
+    "FSIsADirectoryError",
+    "FSDirectoryNotEmptyError",
+    "FSInvalidFileDescriptor",
+    "FSInvalidArgumentError",
+    "FSEndOfFileError",
+    # Remote operation error
+    "FSBackendOfflineError",
+    "FSRemoteManifestNotFound",
+    "FSRemoteManifestNotFoundBadVersion",
+    "FSRemoteManifestNotFoundBadTimestamp",
+    "FSRemoteBlockNotFound",
+    "FSRemoteSyncError",
+    "FSBadEncryptionRevision",
+    "FSSharingNotAllowedError",
+    "FSWorkspaceNoAccess",
+    "FSWorkspaceNoReadAccess",
+    "FSWorkspaceNoWriteAccess",
+    "FSWorkspaceNotInMaintenance",
+    "FSWorkspaceInMaintenance",
 )

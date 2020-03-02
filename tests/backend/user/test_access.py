@@ -3,7 +3,7 @@
 import pytest
 from pendulum import Pendulum
 
-from parsec.api.protocole import packb, user_get_serializer, user_find_serializer
+from parsec.api.protocol import packb, user_get_serializer, user_find_serializer
 
 from tests.common import freeze_time
 
@@ -46,17 +46,10 @@ async def test_api_user_get_ok(access_testbed):
     rep = await user_get(sock, device.user_id)
     assert rep == {
         "status": "ok",
-        "is_admin": False,
-        "user_id": device.user_id,
         "user_certificate": binder.certificates_store.get_user(device),
-        "devices": [
-            {
-                "device_id": device.device_id,
-                "revoked_device_certificate": None,
-                "device_certificate": binder.certificates_store.get_device(device),
-            }
-        ],
-        "trustchain": [],
+        "revoked_user_certificate": None,
+        "device_certificates": [binder.certificates_store.get_device(device)],
+        "trustchain": {"devices": [], "revoked_users": [], "users": []},
     }
 
 
@@ -85,62 +78,55 @@ async def test_api_user_get_ok_deep_trustchain(
         await binder.bind_device(mike2, certifier=mike1)
 
     with freeze_time(d2):
-        await binder.bind_revocation(roger1, certifier=ph1)
-        await binder.bind_revocation(mike2, certifier=ph2)
+        await binder.bind_revocation(roger1.user_id, certifier=ph1)
+        await binder.bind_revocation(mike1.user_id, certifier=ph2)
 
     rep = await user_get(sock, mike2.device_id.user_id)
-    rep["trustchain"] = sorted(rep["trustchain"], key=lambda x: x["device_id"])
-    rep["devices"] = sorted(rep["devices"], key=lambda x: x["device_id"])
-    assert rep == {
+    cooked_rep = {
+        **rep,
+        "user_certificate": certificates_store.translate_certif(rep["user_certificate"]),
+        "device_certificates": certificates_store.translate_certifs(rep["device_certificates"]),
+        "revoked_user_certificate": certificates_store.translate_certif(
+            rep["revoked_user_certificate"]
+        ),
+        "trustchain": {
+            "devices": sorted(certificates_store.translate_certifs(rep["trustchain"]["devices"])),
+            "users": sorted(certificates_store.translate_certifs(rep["trustchain"]["users"])),
+            "revoked_users": sorted(
+                certificates_store.translate_certifs(rep["trustchain"]["revoked_users"])
+            ),
+        },
+    }
+
+    assert cooked_rep == {
         "status": "ok",
-        "is_admin": False,
-        "user_id": mike2.device_id.user_id,
-        "user_certificate": certificates_store.get_user(mike2),
-        "devices": [
-            {
-                "device_id": mike1.device_id,
-                "device_certificate": certificates_store.get_device(mike1),
-                "revoked_device_certificate": None,
-            },
-            {
-                "device_id": mike2.device_id,
-                "device_certificate": certificates_store.get_device(mike2),
-                "revoked_device_certificate": certificates_store.get_revoked_device(mike2),
-            },
-        ],
-        "trustchain": [
-            {
-                "device_id": godfrey1.device_id,
-                "device_certificate": certificates_store.get_device(godfrey1),
-                "revoked_device_certificate": None,
-            },
-            {
-                "device_id": mike1.device_id,
-                "device_certificate": certificates_store.get_device(mike1),
-                "revoked_device_certificate": None,
-            },
-            {
-                "device_id": ph1.device_id,
-                "device_certificate": certificates_store.get_device(ph1),
-                "revoked_device_certificate": None,
-            },
-            {
-                "device_id": ph2.device_id,
-                "device_certificate": certificates_store.get_device(ph2),
-                "revoked_device_certificate": None,
-            },
-            {
-                "device_id": roger1.device_id,
-                "device_certificate": certificates_store.get_device(roger1),
-                "revoked_device_certificate": certificates_store.get_revoked_device(roger1),
-            },
-        ],
+        "user_certificate": "<mike user certif>",
+        "device_certificates": ["<mike@dev1 device certif>", "<mike@dev2 device certif>"],
+        "revoked_user_certificate": "<mike revoked user certif>",
+        "trustchain": {
+            "devices": sorted(
+                [
+                    "<philippe@dev2 device certif>",
+                    "<philippe@dev1 device certif>",
+                    "<Godfrey@dev1 device certif>",
+                    "<mike@dev1 device certif>",
+                    "<roger@dev1 device certif>",
+                ]
+            ),
+            "users": sorted(
+                [
+                    "<roger user certif>",
+                    "<philippe user certif>",
+                    "<mike user certif>",
+                    "<Godfrey user certif>",
+                ]
+            ),
+            "revoked_users": sorted(["<roger revoked user certif>", "<mike revoked user certif>"]),
+        },
     }
 
 
-@pytest.mark.parametrize(
-    "bad_msg", [{"user_id": 42}, {"user_id": None}, {"user_id": "alice", "unknown": "field"}, {}]
-)
+@pytest.mark.parametrize("bad_msg", [{"user_id": 42}, {"user_id": None}, {}])
 @pytest.mark.trio
 async def test_api_user_get_bad_msg(alice_backend_sock, bad_msg):
     await alice_backend_sock.send(packb({"cmd": "user_get", **bad_msg}))
@@ -174,8 +160,7 @@ async def test_api_user_find(access_testbed, organization_factory, local_device_
         device = local_device_factory(name, org)
         await binder.bind_device(device, certifier=godfrey1)
 
-    await binder.bind_revocation(binder.get_device("Philip_J_Fry@p1"), certifier=godfrey1)
-    await binder.bind_revocation(binder.get_device("Philippe@p2"), certifier=godfrey1)
+    await binder.bind_revocation("Philip_J_Fry", certifier=godfrey1)
 
     # Also create homonyme in different organization, just to be sure...
     other_org = organization_factory("FilmMark")
@@ -196,9 +181,23 @@ async def test_api_user_find(access_testbed, organization_factory, local_device_
         "total": 2,
     }
 
+    # Test case insensitivity
+    rep = await user_find(sock, query="phil")
+    assert rep == {
+        "status": "ok",
+        "results": ["Philip_J_Fry", "Philippe"],
+        "per_page": 100,
+        "page": 1,
+        "total": 2,
+    }
+
     # Test partial search while omitting revoked users
     rep = await user_find(sock, query="Phil", omit_revoked=True)
     assert rep == {"status": "ok", "results": ["Philippe"], "per_page": 100, "page": 1, "total": 1}
+
+    # Test partial search with invalid query
+    rep = await user_find(sock, query="p*", omit_revoked=True)
+    assert rep == {"status": "ok", "results": [], "per_page": 100, "page": 1, "total": 0}
 
     # Test pagination
     rep = await user_find(sock, query="Phil", page=1, per_page=1)
@@ -235,7 +234,7 @@ async def test_api_user_find(access_testbed, organization_factory, local_device_
     }
 
     # Test bad params
-    for bad in [{"dummy": 42}, {"query": 42}, {"page": 0}, {"per_page": 0}, {"per_page": 101}]:
+    for bad in [{"query": 42}, {"page": 0}, {"per_page": 0}, {"per_page": 101}]:
         await sock.send(packb({"cmd": "user_find", **bad}))
         raw_rep = await sock.recv()
         rep = user_find_serializer.rep_loads(raw_rep)

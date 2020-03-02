@@ -2,10 +2,11 @@
 
 import io
 import gettext
+import pendulum
 
 from structlog import get_logger
 
-from PyQt5.QtCore import QCoreApplication, QIODevice, QFile, QDataStream
+from PyQt5.QtCore import QCoreApplication, QIODevice, QFile, QDataStream, QLocale
 
 from parsec.core.gui.desktop import get_locale_language
 
@@ -13,8 +14,20 @@ from parsec.core.gui.desktop import get_locale_language
 LANGUAGES = {"English": "en", "Français": "fr"}
 
 _current_translator = None
+_current_locale_language = None
 
 logger = get_logger()
+
+
+def format_datetime(dt, full=False, seconds=False):
+    fmt = "L LT"
+    if seconds:
+        fmt = "L LTS"
+    if full:
+        fmt = "LLLL"
+    return dt.in_tz(pendulum.local_timezone()).format(
+        fmt, locale=_current_locale_language, formatter="alternative"
+    )
 
 
 def qt_translate(_, string):
@@ -27,8 +40,14 @@ def translate(string):
     return gettext.gettext(string)
 
 
+def get_qlocale():
+    q = QLocale(_current_locale_language)
+    return q
+
+
 def switch_language(core_config, lang_key=None):
     global _current_translator
+    global _current_locale_language
 
     QCoreApplication.translate = qt_translate
 
@@ -42,10 +61,12 @@ def switch_language(core_config, lang_key=None):
             logger.info(f"Language '{lang_key}' unavailable, defaulting to English")
         lang_key = "en"
 
+    _current_locale_language = lang_key
+
     rc_file = QFile(f":/translations/translations/parsec_{lang_key}.mo")
     if not rc_file.open(QIODevice.ReadOnly):
         logger.warning(f"Unable to read the translations for language '{lang_key}'")
-        return False
+        return None
 
     try:
         data_stream = QDataStream(rc_file)
@@ -57,7 +78,7 @@ def switch_language(core_config, lang_key=None):
         _current_translator.install()
     except OSError:
         logger.warning(f"Unable to load the translations for language '{lang_key}'")
-        return False
+        return None
     finally:
         rc_file.close()
-    return True
+    return lang_key

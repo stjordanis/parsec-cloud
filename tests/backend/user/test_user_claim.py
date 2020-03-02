@@ -1,11 +1,16 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
 import pytest
+import trio
 from pendulum import Pendulum
 from async_generator import asynccontextmanager
 
-from parsec.types import DeviceID
-from parsec.api.protocole import user_get_invitation_creator_serializer, user_claim_serializer
+from parsec.api.protocol import (
+    UserID,
+    DeviceID,
+    user_get_invitation_creator_serializer,
+    user_claim_serializer,
+)
 from parsec.backend.user import User, Device, UserInvitation, PEER_EVENT_MAX_WAIT
 
 from tests.common import freeze_time
@@ -40,7 +45,20 @@ async def user_claim(sock, **kwargs):
 
 
 @pytest.mark.trio
-async def test_user_claim_ok(backend, anonymous_backend_sock, coolorg, mallory_invitation):
+async def test_user_claim_ok(
+    monkeypatch, backend, anonymous_backend_sock, coolorg, alice, mallory_invitation
+):
+    user_invitation_retreived = trio.Event()
+
+    vanilla_claim_user_invitation = backend.user.claim_user_invitation
+
+    async def _mocked_claim_user_invitation(*args, **kwargs):
+        ret = await vanilla_claim_user_invitation(*args, **kwargs)
+        user_invitation_retreived.set()
+        return ret
+
+    monkeypatch.setattr(backend.user, "claim_user_invitation", _mocked_claim_user_invitation)
+
     with freeze_time(mallory_invitation.created_on):
         async with user_claim(
             anonymous_backend_sock,
@@ -48,33 +66,56 @@ async def test_user_claim_ok(backend, anonymous_backend_sock, coolorg, mallory_i
             encrypted_claim=b"<foo>",
         ) as prep:
 
-            await backend.event_bus.spy.wait(
-                "event.connected", kwargs={"event_name": "user.created"}
-            )
-            backend.event_bus.send(
-                "user.created", organization_id=coolorg.organization_id, user_id="dummy"
-            )
-            backend.event_bus.send(
-                "user.created",
-                organization_id=coolorg.organization_id,
-                user_id=mallory_invitation.user_id,
+            # `backend.user.create_user` will destroy the user invitation,
+            # so make sure we retreived it before
+            await user_invitation_retreived.wait()
+
+            # No the user we are waiting for
+            await backend.user.create_user(
+                alice.organization_id,
+                User(
+                    user_id=UserID("dummy"),
+                    user_certificate=b"<user certif>",
+                    user_certifier=alice.device_id,
+                ),
+                Device(
+                    device_id=DeviceID("dummy@pc1"),
+                    device_certificate=b"<device certif>",
+                    device_certifier=alice.device_id,
+                ),
             )
 
-    assert prep[0] == {"status": "ok"}
+            await backend.user.create_user(
+                alice.organization_id,
+                User(
+                    user_id=mallory_invitation.user_id,
+                    user_certificate=b"<user certif>",
+                    user_certifier=alice.device_id,
+                ),
+                Device(
+                    device_id=DeviceID(f"{mallory_invitation.user_id}@pc1"),
+                    device_certificate=b"<device certif>",
+                    device_certifier=alice.device_id,
+                ),
+            )
+
+    assert prep[0] == {
+        "status": "ok",
+        "user_certificate": b"<user certif>",
+        "device_certificate": b"<device certif>",
+    }
 
 
 @pytest.mark.trio
 async def test_user_claim_timeout(mock_clock, backend, anonymous_backend_sock, mallory_invitation):
-    with freeze_time(mallory_invitation.created_on):
+    with freeze_time(mallory_invitation.created_on), backend.event_bus.listen() as spy:
         async with user_claim(
             anonymous_backend_sock,
             invited_user_id=mallory_invitation.user_id,
             encrypted_claim=b"<foo>",
         ) as prep:
 
-            await backend.event_bus.spy.wait(
-                "event.connected", kwargs={"event_name": "user.created"}
-            )
+            await spy.wait_with_timeout("event.connected", {"event_name": "user.created"})
             mock_clock.jump(PEER_EVENT_MAX_WAIT + 1)
 
     assert prep[0] == {
@@ -85,18 +126,23 @@ async def test_user_claim_timeout(mock_clock, backend, anonymous_backend_sock, m
 
 @pytest.mark.trio
 async def test_user_claim_denied(backend, anonymous_backend_sock, coolorg, mallory_invitation):
-    with freeze_time(mallory_invitation.created_on):
+    with freeze_time(mallory_invitation.created_on), backend.event_bus.listen() as spy:
         async with user_claim(
             anonymous_backend_sock,
             invited_user_id=mallory_invitation.user_id,
             encrypted_claim=b"<foo>",
         ) as prep:
 
-            await backend.event_bus.spy.wait(
-                "event.connected", kwargs={"event_name": "user.invitation.cancelled"}
+            await spy.wait_with_timeout(
+                "event.connected", {"event_name": "user.invitation.cancelled"}
             )
             backend.event_bus.send(
-                "user.created", organization_id=coolorg.organization_id, user_id="dummy"
+                "user.created",
+                organization_id=coolorg.organization_id,
+                user_id="dummy",
+                user_certificate=b"<dummy user certif>",
+                first_device_id="dummy@dummy",
+                first_device_certificate=b"<dummy device certif>",
             )
             backend.event_bus.send(
                 "user.invitation.cancelled",

@@ -3,16 +3,12 @@
 import os
 import pytest
 from hypothesis import strategies as st
-from hypothesis_trio.stateful import (
-    initialize,
-    rule,
-    run_state_machine_as_test,
-    TrioRuleBasedStateMachine,
-    Bundle,
-)
+from hypothesis_trio.stateful import initialize, rule, Bundle
 from string import ascii_lowercase
 
-from tests.common import call_with_control
+
+def get_path(path):
+    return path[2:] if path[2:] else "/"
 
 
 # The point is not to find breaking filenames here, so keep it simple
@@ -21,37 +17,18 @@ st_entry_name = st.text(alphabet=ascii_lowercase, min_size=1, max_size=3)
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.name == "nt", reason="Windows path style not compatible with oracle")
-def test_fs_offline_restart_and_tree(
-    hypothesis_settings, local_storage_factory, oracle_fs_factory, fs_factory, alice
-):
-    class FSOfflineRestartAndTree(TrioRuleBasedStateMachine):
+def test_fs_offline_restart_and_tree(user_fs_offline_state_machine, oracle_fs_factory, alice):
+    class FSOfflineRestartAndTree(user_fs_offline_state_machine):
         Files = Bundle("file")
         Folders = Bundle("folder")
 
-        async def restart_fs(self):
-            try:
-                await self.fs_controller.stop()
-            except AttributeError:
-                pass
-
-            async def _fs_controlled_cb(started_cb):
-                async with fs_factory(device=self.device, local_storage=self.local_storage) as fs:
-                    await started_cb(fs=fs)
-
-            self.fs_controller = await self.get_root_nursery().start(
-                call_with_control, _fs_controlled_cb
-            )
-
-        @property
-        def fs(self):
-            return self.fs_controller.fs
-
         @initialize(target=Folders)
         async def init(self):
+            await self.reset_all()
             self.device = alice
-            self.local_storage = local_storage_factory(self.device)
-            await self.restart_fs()
-            await self.fs.workspace_create("/w")
+            await self.restart_user_fs(self.device)
+            self.wid = await self.user_fs.workspace_create("w")
+            self.workspace = self.user_fs.get_workspace(self.wid)
 
             self.oracle_fs = oracle_fs_factory()
             self.oracle_fs.create_workspace("/w")
@@ -59,70 +36,71 @@ def test_fs_offline_restart_and_tree(
 
         @rule()
         async def restart(self):
-            await self.restart_fs()
+            await self.restart_user_fs(self.device)
+            self.workspace = self.user_fs.get_workspace(self.wid)
 
         @rule(target=Files, parent=Folders, name=st_entry_name)
         async def create_file(self, parent, name):
-            path = os.path.join(parent, name)
+            path = f"{parent}/{name}"
             expected_status = self.oracle_fs.create_file(path)
             if expected_status == "ok":
-                await self.fs.touch(path=path)
+                await self.workspace.touch(path=get_path(path), exist_ok=False)
             else:
-                with pytest.raises(OSError):
-                    await self.fs.touch(path=path)
+                with pytest.raises((FileExistsError, FileNotFoundError, NotADirectoryError)):
+                    await self.workspace.touch(path=get_path(path), exist_ok=False)
             return path
 
         @rule(target=Folders, parent=Folders, name=st_entry_name)
         async def create_folder(self, parent, name):
-            path = os.path.join(parent, name)
+            path = f"{parent}/{name}"
             expected_status = self.oracle_fs.create_folder(path)
             if expected_status == "ok":
-                await self.fs.folder_create(path=path)
+                await self.workspace.mkdir(path=get_path(path), exist_ok=False)
             else:
-                with pytest.raises(OSError):
-                    await self.fs.folder_create(path=path)
+                with pytest.raises((FileExistsError, FileNotFoundError, NotADirectoryError)):
+                    await self.workspace.mkdir(path=get_path(path), exist_ok=False)
             return path
 
         @rule(path=Files)
         async def delete_file(self, path):
             expected_status = self.oracle_fs.unlink(path)
             if expected_status == "ok":
-                await self.fs.file_delete(path=path)
+                await self.workspace.unlink(path=get_path(path))
             else:
                 with pytest.raises(OSError):
-                    await self.fs.file_delete(path=path)
+                    await self.workspace.unlink(path=get_path(path))
             return path
 
         @rule(path=Folders)
         async def delete_folder(self, path):
             expected_status = self.oracle_fs.rmdir(path)
             if expected_status == "ok":
-                await self.fs.folder_delete(path=path)
+                await self.workspace.rmdir(path=get_path(path))
             else:
                 with pytest.raises(OSError):
-                    await self.fs.folder_delete(path=path)
+                    await self.workspace.rmdir(path=get_path(path))
             return path
 
         @rule(target=Files, src=Files, dst_parent=Folders, dst_name=st_entry_name)
         async def move_file(self, src, dst_parent, dst_name):
-            dst = os.path.join(dst_parent, dst_name)
+            dst = f"{dst_parent}/{dst_name}"
             expected_status = self.oracle_fs.move(src, dst)
             if expected_status == "ok":
-                await self.fs.move(src, dst)
+                await self.workspace.rename(get_path(src), get_path(dst))
             else:
                 with pytest.raises(OSError):
-                    await self.fs.move(src, dst)
+                    await self.workspace.rename(get_path(src), get_path(dst))
             return dst
 
         @rule(target=Folders, src=Folders, dst_parent=Folders, dst_name=st_entry_name)
         async def move_folder(self, src, dst_parent, dst_name):
-            dst = os.path.join(dst_parent, dst_name)
+            dst = f"{dst_parent}/{dst_name}"
             expected_status = self.oracle_fs.move(src, dst)
             if expected_status == "ok":
-                await self.fs.move(src, dst)
+                await self.workspace.rename(get_path(src), get_path(dst))
             else:
                 with pytest.raises(OSError):
-                    await self.fs.move(src, dst)
+                    await self.workspace.rename(get_path(src), get_path(dst))
             return dst
 
-    run_state_machine_as_test(FSOfflineRestartAndTree, settings=hypothesis_settings)
+    FSOfflineRestartAndTree.run_as_test()

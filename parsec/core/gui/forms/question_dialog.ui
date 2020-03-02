@@ -6,15 +6,27 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>437</width>
-    <height>139</height>
+    <width>435</width>
+    <height>125</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+   <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>435</width>
+    <height>0</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>800</width>
+    <height>16777215</height>
+   </size>
   </property>
   <property name="windowTitle">
    <string>Dialog</string>
@@ -23,11 +35,19 @@
    <string notr="true">QPushButton:pressed
 {
 border: 0;
+}
+
+QLabel
+{
+color: rgb(12, 65, 157);
 }</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
     <number>0</number>
+   </property>
+   <property name="sizeConstraint">
+    <enum>QLayout::SetDefaultConstraint</enum>
    </property>
    <property name="leftMargin">
     <number>0</number>
@@ -59,6 +79,9 @@ background-color: rgb(255, 255, 255);
      <layout class="QVBoxLayout" name="verticalLayout_3">
       <property name="spacing">
        <number>0</number>
+      </property>
+      <property name="sizeConstraint">
+       <enum>QLayout::SetDefaultConstraint</enum>
       </property>
       <property name="leftMargin">
        <number>10</number>
@@ -103,7 +126,7 @@ background-color: rgb(255, 255, 255);
          </spacer>
         </item>
         <item>
-         <widget class="QPushButton" name="button_close">
+         <widget class="PointingHandButton" name="button_close">
           <property name="minimumSize">
            <size>
             <width>20</width>
@@ -115,6 +138,18 @@ background-color: rgb(255, 255, 255);
             <width>20</width>
             <height>20</height>
            </size>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">#button_close
+{
+background-color: rgb(255, 255, 255);
+border: 0;
+}
+
+#button_close:pressed
+{
+border: 0;
+}</string>
           </property>
           <property name="text">
            <string/>
@@ -139,7 +174,7 @@ background-color: rgb(255, 255, 255);
       <item>
        <layout class="QHBoxLayout" name="horizontalLayout_2">
         <property name="sizeConstraint">
-         <enum>QLayout::SetMaximumSize</enum>
+         <enum>QLayout::SetDefaultConstraint</enum>
         </property>
         <item>
          <widget class="QLabel" name="label_icon">
@@ -175,7 +210,7 @@ background-color: rgb(255, 255, 255);
            <number>10</number>
           </property>
           <property name="rightMargin">
-           <number>10</number>
+           <number>15</number>
           </property>
           <item>
            <widget class="QLabel" name="label_title">
@@ -187,7 +222,7 @@ background-color: rgb(255, 255, 255);
              </font>
             </property>
             <property name="styleSheet">
-             <string notr="true">color: rgb(12, 65, 157);</string>
+             <string notr="true"/>
             </property>
             <property name="text">
              <string/>
@@ -200,21 +235,19 @@ background-color: rgb(255, 255, 255);
           <item>
            <widget class="QLabel" name="label_message">
             <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="MinimumExpanding">
+             <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
               <horstretch>0</horstretch>
               <verstretch>0</verstretch>
              </sizepolicy>
             </property>
-            <property name="font">
-             <font>
-              <pointsize>12</pointsize>
-             </font>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">color: rgb(12, 65, 157);</string>
-            </property>
             <property name="text">
              <string/>
+            </property>
+            <property name="scaledContents">
+             <bool>false</bool>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignJustify|Qt::AlignVCenter</set>
             </property>
             <property name="wordWrap">
              <bool>true</bool>
@@ -225,6 +258,9 @@ background-color: rgb(255, 255, 255);
            <layout class="QHBoxLayout" name="horizontalLayout_3">
             <property name="spacing">
              <number>8</number>
+            </property>
+            <property name="sizeConstraint">
+             <enum>QLayout::SetDefaultConstraint</enum>
             </property>
             <item>
              <spacer name="horizontalSpacer_2">
@@ -240,36 +276,28 @@ background-color: rgb(255, 255, 255);
              </spacer>
             </item>
             <item>
-             <widget class="QPushButton" name="button_no">
+             <widget class="ShadowedButton" name="button_no">
               <property name="minimumSize">
                <size>
-                <width>0</width>
-                <height>32</height>
+                <width>64</width>
+                <height>16</height>
                </size>
               </property>
               <property name="font">
                <font>
                 <pointsize>12</pointsize>
-                <weight>75</weight>
-                <bold>true</bold>
+                <weight>50</weight>
+                <bold>false</bold>
                </font>
               </property>
               <property name="layoutDirection">
                <enum>Qt::RightToLeft</enum>
               </property>
               <property name="styleSheet">
-               <string notr="true">background-color: rgb(45, 144, 209);
-border: 1px solid rgb(11, 56, 166);
-color: rgb(255, 255, 255);
-padding-left: 10px;
-padding-right: 10px;</string>
+               <string notr="true"/>
               </property>
               <property name="text">
-               <string>No</string>
-              </property>
-              <property name="icon">
-               <iconset resource="../rc/resources.qrc">
-                <normaloff>:/icons/images/icons/white_cross.png</normaloff>:/icons/images/icons/white_cross.png</iconset>
+               <string>BUTTON_NO</string>
               </property>
               <property name="iconSize">
                <size>
@@ -280,36 +308,28 @@ padding-right: 10px;</string>
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="button_yes">
+             <widget class="ShadowedButton" name="button_yes">
               <property name="minimumSize">
                <size>
-                <width>0</width>
-                <height>32</height>
+                <width>64</width>
+                <height>16</height>
                </size>
               </property>
               <property name="font">
                <font>
                 <pointsize>12</pointsize>
-                <weight>75</weight>
-                <bold>true</bold>
+                <weight>50</weight>
+                <bold>false</bold>
                </font>
               </property>
               <property name="layoutDirection">
                <enum>Qt::RightToLeft</enum>
               </property>
               <property name="styleSheet">
-               <string notr="true">background-color: rgb(45, 144, 209);
-border: 1px solid rgb(11, 56, 166);
-color: rgb(255, 255, 255);
-padding-left: 10px;
-padding-right: 10px;</string>
+               <string notr="true"/>
               </property>
               <property name="text">
-               <string>Yes</string>
-              </property>
-              <property name="icon">
-               <iconset resource="../rc/resources.qrc">
-                <normaloff>:/icons/images/icons/checked_white.png</normaloff>:/icons/images/icons/checked_white.png</iconset>
+               <string>BUTTON_YES</string>
               </property>
               <property name="iconSize">
                <size>
@@ -330,6 +350,18 @@ padding-right: 10px;</string>
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ShadowedButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+  <customwidget>
+   <class>PointingHandButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+ </customwidgets>
  <resources>
   <include location="../rc/resources.qrc"/>
  </resources>

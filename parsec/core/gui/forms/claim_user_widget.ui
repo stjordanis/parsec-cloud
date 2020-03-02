@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>632</width>
-    <height>723</height>
+    <height>413</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -20,15 +20,38 @@
    <string>Form</string>
   </property>
   <property name="styleSheet">
-   <string notr="true">QWidget#LoginRegisterUserWidget
+   <string notr="true">#button_claim
 {
 background-color: rgb(12, 65, 156);
+height: 32px;
 }
-</string>
+
+#button_claim:pressed
+{
+background-color: rgb(32, 85, 176);
+}
+
+#button_claim:disabled
+{
+background-color: rgb(112, 112, 112);
+color: rgb(255, 255, 255);
+}</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout_4">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
    <item>
-    <widget class="QLabel" name="label_9">
+    <widget class="QLabel" name="label_instructions">
      <property name="maximumSize">
       <size>
        <width>16777215</width>
@@ -40,11 +63,8 @@ background-color: rgb(12, 65, 156);
        <pointsize>12</pointsize>
       </font>
      </property>
-     <property name="styleSheet">
-      <string notr="true">color: rgb(255, 255, 255);</string>
-     </property>
      <property name="text">
-      <string>To register a new user, you need another user to create an account and get a token.</string>
+      <string/>
      </property>
      <property name="alignment">
       <set>Qt::AlignJustify|Qt::AlignVCenter</set>
@@ -72,67 +92,7 @@ background-color: rgb(12, 65, 156);
       </size>
      </property>
      <property name="styleSheet">
-      <string notr="true">QPushButton:disabled
-{
-background-color: rgb(128, 128, 128);
-}
-
-QPushButton
-{
-border: 1px solid rgb(255, 255, 255);
-color: rgb(255, 255, 255);
-padding: 7px;
-}
-
-QPushButton:pressed
-{
-background-color: rgb(32, 85, 176);
-}
-
-QLabel
-{
-color: rgb(255, 255, 255);
-}
-
-QLineEdit
-{
-border: 2px solid rgb(46, 145, 208);
-background-color: white;
-color: black;
-padding-left: 5px;
-}
-
-QComboBox
-{
-border: 2px solid rgb(46, 145, 208);
-background-color: white;
-color: black;
-padding-left: 5px;
-}
-
-QComboBox::down-arrow
-{
-image: url(:/icons/images/icons/down-arrow.png);
-}
-
-QCheckBox
-{
-color: rgb(255, 255, 255);
-}
-
-QCheckBox::indicator
-{
-width: 15px;
-height: 15px;
-background-color: rgb(255, 255, 255);
-border: 2px solid rgb(46, 145, 208);
-color: black;
-}
-
-QCheckBox::indicator:checked
-{
-image: url(:/icons/images/icons/checked.png)
-}</string>
+      <string notr="true"/>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout_6">
       <property name="spacing">
@@ -157,7 +117,7 @@ image: url(:/icons/images/icons/checked.png)
         </property>
         <layout class="QVBoxLayout" name="verticalLayout">
          <property name="spacing">
-          <number>10</number>
+          <number>5</number>
          </property>
          <property name="leftMargin">
           <number>0</number>
@@ -171,46 +131,6 @@ image: url(:/icons/images/icons/checked.png)
          <property name="bottomMargin">
           <number>0</number>
          </property>
-         <item>
-          <layout class="QVBoxLayout" name="verticalLayout_5">
-           <property name="spacing">
-            <number>0</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="label">
-             <property name="font">
-              <font>
-               <pointsize>12</pointsize>
-              </font>
-             </property>
-             <property name="styleSheet">
-              <string notr="true"/>
-             </property>
-             <property name="text">
-              <string>User name</string>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignCenter</set>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLineEdit" name="line_edit_login">
-             <property name="minimumSize">
-              <size>
-               <width>0</width>
-               <height>32</height>
-              </size>
-             </property>
-             <property name="font">
-              <font>
-               <pointsize>12</pointsize>
-              </font>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
          <item>
           <layout class="QVBoxLayout" name="verticalLayout_7">
            <property name="spacing">
@@ -227,7 +147,7 @@ image: url(:/icons/images/icons/checked.png)
               <string notr="true"/>
              </property>
              <property name="text">
-              <string>Device name</string>
+              <string>LABEL_DEVICE_NAME</string>
              </property>
              <property name="alignment">
               <set>Qt::AlignCenter</set>
@@ -267,7 +187,7 @@ image: url(:/icons/images/icons/checked.png)
               <string notr="true"/>
              </property>
              <property name="text">
-              <string>Token</string>
+              <string>LABEL_TOKEN</string>
              </property>
              <property name="alignment">
               <set>Qt::AlignCenter</set>
@@ -276,43 +196,6 @@ image: url(:/icons/images/icons/checked.png)
            </item>
            <item>
             <widget class="QLineEdit" name="line_edit_token">
-             <property name="minimumSize">
-              <size>
-               <width>0</width>
-               <height>32</height>
-              </size>
-             </property>
-             <property name="font">
-              <font>
-               <pointsize>12</pointsize>
-              </font>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item>
-          <layout class="QVBoxLayout" name="verticalLayout_9">
-           <property name="spacing">
-            <number>0</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="label_10">
-             <property name="font">
-              <font>
-               <pointsize>12</pointsize>
-              </font>
-             </property>
-             <property name="text">
-              <string>URL</string>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignCenter</set>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLineEdit" name="line_edit_url">
              <property name="minimumSize">
               <size>
                <width>0</width>
@@ -362,7 +245,7 @@ image: url(:/icons/images/icons/checked.png)
                  <string notr="true"/>
                 </property>
                 <property name="text">
-                 <string>Password</string>
+                 <string>LABEL_PASSWORD</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignCenter</set>
@@ -411,7 +294,7 @@ image: url(:/icons/images/icons/checked.png)
                  <string notr="true"/>
                 </property>
                 <property name="text">
-                 <string>Password check</string>
+                 <string>LABEL_PASSWORD_CHECK</string>
                 </property>
                 <property name="alignment">
                  <set>Qt::AlignCenter</set>
@@ -472,145 +355,15 @@ image: url(:/icons/images/icons/checked.png)
           </widget>
          </item>
          <item>
-          <widget class="QWidget" name="widget_pkcs11" native="true">
-           <property name="font">
-            <font>
-             <pointsize>12</pointsize>
-            </font>
-           </property>
-           <property name="styleSheet">
-            <string notr="true">color: rgb(255, 255, 255);</string>
-           </property>
-           <layout class="QVBoxLayout" name="verticalLayout_3">
-            <property name="spacing">
-             <number>15</number>
-            </property>
-            <property name="leftMargin">
-             <number>0</number>
-            </property>
-            <property name="topMargin">
-             <number>0</number>
-            </property>
-            <property name="rightMargin">
-             <number>0</number>
-            </property>
-            <property name="bottomMargin">
-             <number>0</number>
-            </property>
-            <item>
-             <layout class="QVBoxLayout" name="verticalLayout_13">
-              <property name="spacing">
-               <number>0</number>
-              </property>
-              <item>
-               <widget class="QLabel" name="label_4">
-                <property name="font">
-                 <font>
-                  <pointsize>12</pointsize>
-                 </font>
-                </property>
-                <property name="styleSheet">
-                 <string notr="true"/>
-                </property>
-                <property name="text">
-                 <string>PKCS #11 Token</string>
-                </property>
-                <property name="alignment">
-                 <set>Qt::AlignCenter</set>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QComboBox" name="combo_pkcs11_token">
-                <property name="minimumSize">
-                 <size>
-                  <width>0</width>
-                  <height>32</height>
-                 </size>
-                </property>
-                <property name="font">
-                 <font>
-                  <pointsize>12</pointsize>
-                 </font>
-                </property>
-                <property name="styleSheet">
-                 <string notr="true">color: black;</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </item>
-            <item>
-             <layout class="QVBoxLayout" name="verticalLayout_14">
-              <property name="spacing">
-               <number>0</number>
-              </property>
-              <item>
-               <widget class="QLabel" name="label_5">
-                <property name="font">
-                 <font>
-                  <pointsize>12</pointsize>
-                 </font>
-                </property>
-                <property name="styleSheet">
-                 <string notr="true"/>
-                </property>
-                <property name="text">
-                 <string>PKCS #11 Key</string>
-                </property>
-                <property name="alignment">
-                 <set>Qt::AlignCenter</set>
-                </property>
-               </widget>
-              </item>
-              <item>
-               <widget class="QComboBox" name="combo_pkcs11_key">
-                <property name="minimumSize">
-                 <size>
-                  <width>0</width>
-                  <height>32</height>
-                 </size>
-                </property>
-                <property name="font">
-                 <font>
-                  <pointsize>12</pointsize>
-                 </font>
-                </property>
-                <property name="styleSheet">
-                 <string notr="true">color: black;</string>
-                </property>
-               </widget>
-              </item>
-             </layout>
-            </item>
-           </layout>
-          </widget>
-         </item>
-         <item>
-          <widget class="QCheckBox" name="check_box_use_pkcs11">
-           <property name="font">
-            <font>
-             <pointsize>12</pointsize>
-            </font>
-           </property>
-           <property name="styleSheet">
-            <string notr="true"/>
-           </property>
-           <property name="text">
-            <string>Authenticate using PKCS #11</string>
-           </property>
-           <property name="checkable">
-            <bool>true</bool>
-           </property>
-           <property name="checked">
-            <bool>false</bool>
-           </property>
-          </widget>
-         </item>
-         <item>
           <layout class="QHBoxLayout" name="horizontalLayout_3">
            <property name="spacing">
             <number>10</number>
+           </property>
+           <property name="topMargin">
+            <number>5</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
            </property>
            <item>
             <spacer name="horizontalSpacer">
@@ -626,7 +379,7 @@ image: url(:/icons/images/icons/checked.png)
             </spacer>
            </item>
            <item>
-            <widget class="QPushButton" name="button_claim">
+            <widget class="PointingHandButton" name="button_claim">
              <property name="font">
               <font>
                <pointsize>13</pointsize>
@@ -639,7 +392,7 @@ image: url(:/icons/images/icons/checked.png)
               <string notr="true"/>
              </property>
              <property name="text">
-              <string>Register</string>
+              <string>BUTTON_CLAIM</string>
              </property>
              <property name="iconSize">
               <size>
@@ -648,7 +401,7 @@ image: url(:/icons/images/icons/checked.png)
               </size>
              </property>
              <property name="flat">
-              <bool>true</bool>
+              <bool>false</bool>
              </property>
             </widget>
            </item>
@@ -662,39 +415,13 @@ image: url(:/icons/images/icons/checked.png)
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>PointingHandButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
- <connections>
-  <connection>
-   <sender>check_box_use_pkcs11</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>widget_pkcs11</receiver>
-   <slot>setVisible(bool)</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>313</x>
-     <y>673</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>313</x>
-     <y>534</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>check_box_use_pkcs11</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>widget_password</receiver>
-   <slot>setHidden(bool)</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>313</x>
-     <y>673</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>313</x>
-     <y>289</y>
-    </hint>
-   </hints>
-  </connection>
- </connections>
+ <connections/>
 </ui>

@@ -1,87 +1,76 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-from typing import Union
+from typing import Union, NewType
 
-from parsec.core.types.base import TrustSeed, AccessID, EntryName, FsPath
-from parsec.core.types.access import (
-    Access,
-    UserAccess,
-    ManifestAccess,
-    BlockAccess,
-    DirtyBlockAccess,
-    WorkspaceRole,
-    WorkspaceRoleField,
-    WorkspaceEntry,
+from parsec.api.data import EntryID, EntryIDField, EntryName, EntryNameField
+
+from parsec.core.types.base import FsPath
+
+from parsec.core.types.backend_address import (
+    BackendAddr,
+    BackendOrganizationAddr,
+    BackendActionAddr,
+    BackendOrganizationBootstrapAddr,
+    BackendOrganizationClaimUserAddr,
+    BackendOrganizationClaimDeviceAddr,
+    BackendOrganizationAddrField,
+    BackendOrganizationFileLinkAddr,
 )
-from parsec.core.types.local_device import LocalDevice, local_device_serializer
-from parsec.core.types.local_manifests import (
+from parsec.core.types.local_device import LocalDevice
+from parsec.core.types.manifest import (
+    DEFAULT_BLOCK_SIZE,
     LocalFileManifest,
     LocalFolderManifest,
     LocalWorkspaceManifest,
+)
+from parsec.core.types.manifest import (
     LocalUserManifest,
     LocalManifest,
-    local_manifest_serializer,
+    WorkspaceEntry,
+    WorkspaceRole,
+    BlockAccess,
+    BlockID,
+    Chunk,
+    ChunkID,
 )
-from parsec.core.types.remote_device import (
-    UnverifiedRemoteUser,
-    UnverifiedRemoteDevice,
-    VerifiedRemoteUser,
-    VerifiedRemoteDevice,
-)
-from parsec.core.types.remote_manifests import (
-    FileManifest,
-    FolderManifest,
-    WorkspaceManifest,
-    UserManifest,
-    RemoteManifest,
-    remote_manifest_serializer,
-)
-from parsec.core.types.local_file import FileCursor, FileDescriptor
 
 
-Manifest = Union[LocalManifest, RemoteManifest]
+FileDescriptor = NewType("FileDescriptor", int)
+LocalFolderishManifests = Union[LocalFolderManifest, LocalWorkspaceManifest]
 
 
 __all__ = (
-    # base
-    "TrustSeed",
-    "AccessID",
-    "EntryName",
     "FileDescriptor",
+    "LocalFolderishManifests",
+    # Base
     "FsPath",
-    # access
-    "Access",
-    "UserAccess",
-    "ManifestAccess",
-    "BlockAccess",
-    "DirtyBlockAccess",
-    "WorkspaceRole",
-    "WorkspaceRoleField",
-    "WorkspaceEntry",
+    # Entry
+    "EntryID",
+    "EntryIDField",
+    "EntryName",
+    "EntryNameField",
+    # Backend address
+    "BackendAddr",
+    "BackendOrganizationAddr",
+    "BackendActionAddr",
+    "BackendOrganizationBootstrapAddr",
+    "BackendOrganizationClaimUserAddr",
+    "BackendOrganizationClaimDeviceAddr",
+    "BackendOrganizationAddrField",
+    "BackendOrganizationFileLinkAddr",
     # local_device
     "LocalDevice",
-    "local_device_serializer",
-    # local_manifests
+    # "manifest"
+    "DEFAULT_BLOCK_SIZE",
     "LocalFileManifest",
     "LocalFolderManifest",
     "LocalWorkspaceManifest",
     "LocalUserManifest",
     "LocalManifest",
-    "local_manifest_serializer",
-    # remote_device
-    "UnverifiedRemoteUser",
-    "UnverifiedRemoteDevice",
-    "VerifiedRemoteUser",
-    "VerifiedRemoteDevice",
-    # remote_manifests
-    "FileManifest",
-    "FolderManifest",
-    "WorkspaceManifest",
-    "UserManifest",
-    "RemoteManifest",
-    "remote_manifest_serializer",
-    "Manifest",
-    # local file
-    "FileCursor",
-    "FileDescriptor",
+    "WorkspaceEntry",
+    "WorkspaceRole",
+    "BlockAccess",
+    "BlockID",
+    "Chunk",
+    "ChunkID",
 )

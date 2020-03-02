@@ -1,23 +1,22 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-import attr
-from typing import Optional
+from typing import Tuple, List, Callable
 
+from collections import defaultdict
 from async_generator import asynccontextmanager
 
 from parsec.event_bus import EventBus
-from parsec.core.types import FileDescriptor, AccessID
+from parsec.core.types import FileDescriptor, EntryID, LocalDevice
+
 from parsec.core.fs.remote_loader import RemoteLoader
-from parsec.core.types import Access, BlockAccess, LocalFileManifest, FileCursor
-from parsec.core.local_storage import (
-    LocalStorage,
-    LocalStorageMissingEntry,
-    FSInvalidFileDescriptor,
-)
-from parsec.core.fs.buffer_ordering import (
-    quick_filter_block_accesses,
-    Buffer,
-    merge_buffers_with_limits,
+from parsec.core.fs.storage import WorkspaceStorage
+from parsec.core.fs.exceptions import FSLocalMissError, FSInvalidFileDescriptor, FSEndOfFileError
+from parsec.core.types import Chunk, BlockID, LocalFileManifest
+from parsec.core.fs.workspacefs.file_operations import (
+    prepare_read,
+    prepare_write,
+    prepare_resize,
+    prepare_reshape,
 )
 
 __all__ = ("FSInvalidFileDescriptor", "FileTransactions")
@@ -26,47 +25,21 @@ __all__ = ("FSInvalidFileDescriptor", "FileTransactions")
 # Helpers
 
 
-def normalize_offset(offset, cursor, manifest):
-    if offset is None:
-        return cursor.offset
-    if offset < 0:
-        return manifest.size
-    return offset
+def normalize_argument(arg, manifest):
+    return manifest.size if arg < 0 else arg
 
 
-def shorten_data_repr(data: bytes) -> bytes:
-    if len(data) > 100:
-        return data[:40] + b"..." + data[-40:]
-    else:
-        return data
+def padded_data(data: bytes, start: int, stop: int) -> bytes:
+    """Return the data between the start and stop index.
 
-
-def pad_content(offset: int, size: int, content: bytes = b""):
-    empty_gap = offset - size
-    if empty_gap <= 0:
-        return offset, content
-    padded_content = b"\x00" * empty_gap + content
-    return size, padded_content
-
-
-def merge_buffers(manifest: LocalFileManifest, start: int, end: int):
-    dirty_blocks = quick_filter_block_accesses(manifest.dirty_blocks, start, end)
-    dirty_buffers = [DirtyBlockBuffer(*args) for args in dirty_blocks]
-    blocks = quick_filter_block_accesses(manifest.blocks, start, end)
-    buffers = [BlockBuffer(*args) for args in blocks]
-    return merge_buffers_with_limits(buffers + dirty_buffers, start, end)
-
-
-@attr.s(slots=True)
-class DirtyBlockBuffer(Buffer):
-    access = attr.ib(type=BlockAccess)
-    data = attr.ib(default=None, type=Optional[bytes])
-
-
-@attr.s(slots=True)
-class BlockBuffer(Buffer):
-    access = attr.ib(type=BlockAccess)
-    data = attr.ib(default=None, type=Optional[bytes])
+    The data is treated as padded with an infinite amount of null bytes before index 0.
+    """
+    assert start <= stop
+    if start <= stop <= 0:
+        return b"\x00" * (stop - start)
+    if 0 <= start <= stop:
+        return data[start:stop]
+    return b"\x00" * (0 - start) + data[0:stop]
 
 
 class FileTransactions:
@@ -76,211 +49,244 @@ class FileTransactions:
     have access to the remote loader to download missing resources.
 
     The exposed transactions all take a file descriptor as first argument.
-    The file descriptors correspond to a file cursor which points to a file
-    on the file system (using access and manifest).
+    The file descriptors correspond to an entry id which points to a file
+    on the file system (i.e. a file manifest).
 
     The corresponding file is locked while performing the change (i.e. between
-    the reading and writing of the file cursor and manifest) in order to avoid
+    the reading and writing of the corresponding manifest) in order to avoid
     race conditions and data corruption.
 
     The table below lists the effects of the 6 file transactions:
     - close    -> remove file descriptor from local storage
-    - seek     -> affects cursor offset
-    - write    -> affects cursor offset, file content and possibly file size
+    - write    -> affects file content and possibly file size
     - truncate -> affects file size and possibly file content
-    - read     -> affects cursor offset
+    - read     -> no side effect
     - flush    -> no-op
     """
 
     def __init__(
         self,
-        workspace_id: AccessID,
-        local_storage: LocalStorage,
+        workspace_id: EntryID,
+        get_workspace_entry: Callable,
+        device: LocalDevice,
+        local_storage: WorkspaceStorage,
         remote_loader: RemoteLoader,
         event_bus: EventBus,
     ):
         self.workspace_id = workspace_id
+        self.get_workspace_entry = get_workspace_entry
+        self.local_author = device.device_id
         self.local_storage = local_storage
         self.remote_loader = remote_loader
         self.event_bus = event_bus
+        self._write_count = defaultdict(int)
 
     # Event helper
 
     def _send_event(self, event, **kwargs):
         self.event_bus.send(event, workspace_id=self.workspace_id, **kwargs)
 
-    # Locking helper
+    # Helper
 
-    # This logic should move to the local storage along with
-    # the remote loader. It would then be up to the local storage
-    # to download the missing blocks and manifests. This should
-    # simplify the code and helper gather all the sensitive methods
-    # in the same module
+    async def _read_chunk(self, chunk: Chunk) -> bytes:
+        data = await self.local_storage.get_chunk(chunk.id)
+        return data[chunk.start - chunk.raw_offset : chunk.stop - chunk.raw_offset]
+
+    async def _write_chunk(self, chunk: Chunk, content: bytes, offset: int = 0) -> None:
+        data = padded_data(content, offset, offset + chunk.stop - chunk.start)
+        await self.local_storage.set_chunk(chunk.id, data)
+        return len(data)
+
+    async def _build_data(self, chunks: Tuple[Chunk]) -> Tuple[bytes, List[BlockID]]:
+        # Empty array
+        if not chunks:
+            return bytearray(), []
+
+        # Build byte array
+        missing = []
+        start, stop = chunks[0].start, chunks[-1].stop
+        result = bytearray(stop - start)
+        for chunk in chunks:
+            try:
+                result[chunk.start - start : chunk.stop - start] = await self._read_chunk(chunk)
+            except FSLocalMissError:
+                assert chunk.access is not None
+                missing.append(chunk.access)
+
+        # Return byte array
+        return result, missing
+
+    # Locking helper
 
     @asynccontextmanager
     async def _load_and_lock_file(self, fd: FileDescriptor):
-        # Get the corresponding access
-        try:
-            cursor, _ = self.local_storage.load_file_descriptor(fd)
-            access = cursor.access
+        # The FSLocalMissError exception is not considered here.
+        # This is because we should be able to assume that the manifest
+        # corresponding to valid file descriptor is always available locally
 
-        # Download the corresponding manifest if it's missing
-        except LocalStorageMissingEntry as exc:
-            await self.remote_loader.load_manifest(exc.access)
-            access = exc.access
+        # Get the corresponding entry_id
+        manifest = await self.local_storage.load_file_descriptor(fd)
 
-        # Try to lock the access
-        try:
-            async with self.local_storage.lock_manifest(access):
-                yield self.local_storage.load_file_descriptor(fd)
-
-        # The entry has been deleted while we were waiting for the lock
-        except LocalStorageMissingEntry:
-            assert fd not in self.local_storage.open_cursors
-            raise FSInvalidFileDescriptor(fd)
-
-    # Helpers
-
-    def _attempt_read(self, manifest: LocalFileManifest, start: int, end: int):
-        missing = []
-        data = bytearray(end - start)
-        merged = merge_buffers(manifest, start, end)
-        for cs in merged.spaces:
-            for bs in cs.buffers:
-                access = bs.buffer.access
-
-                if isinstance(bs.buffer, DirtyBlockBuffer):
-                    try:
-                        buff = self.local_storage.get_block(access)
-                    except LocalStorageMissingEntry as exc:
-                        raise RuntimeError(f"Unknown local block `{access.id}`") from exc
-
-                elif isinstance(bs.buffer, BlockBuffer):
-                    try:
-                        buff = self.local_storage.get_block(access)
-                    except LocalStorageMissingEntry:
-                        missing.append(access)
-                        continue
-
-                data[bs.start - cs.start : bs.end - cs.start] = buff[
-                    bs.buffer_slice_start : bs.buffer_slice_end
-                ]
-
-        return data, missing
-
-    # Temporary helper
-
-    def open(self, access: Access):
-        cursor = FileCursor(access)
-        self.local_storage.add_file_reference(access)
-        return self.local_storage.create_file_descriptor(cursor)
+        # Lock the entry_id
+        async with self.local_storage.lock_manifest(manifest.id):
+            yield await self.local_storage.load_file_descriptor(fd)
 
     # Atomic transactions
 
     async def fd_close(self, fd: FileDescriptor) -> None:
         # Fetch and lock
-        async with self._load_and_lock_file(fd) as (cursor, manifest):
+        async with self._load_and_lock_file(fd) as manifest:
+
+            # Force writing to disk
+            await self.local_storage.ensure_manifest_persistent(manifest.id)
 
             # Atomic change
-            self.local_storage.remove_file_descriptor(fd, manifest)
+            self.local_storage.remove_file_descriptor(fd)
 
-    async def fd_seek(self, fd: FileDescriptor, offset: int) -> None:
+            # Clear write count
+            self._write_count.pop(fd, None)
+
+    async def fd_write(
+        self, fd: FileDescriptor, content: bytes, offset: int, constrained: bool = False
+    ) -> int:
         # Fetch and lock
-        async with self._load_and_lock_file(fd) as (cursor, manifest):
+        async with self._load_and_lock_file(fd) as manifest:
 
-            # Prepare
-            offset = normalize_offset(offset, cursor, manifest)
-
-            # Atomic change
-            cursor.offset = offset
-
-    async def fd_write(self, fd: FileDescriptor, content: bytes, offset: int = None) -> int:
-        # Fetch and lock
-        async with self._load_and_lock_file(fd) as (cursor, manifest):
+            # Constrained - truncate content to the right length
+            if constrained:
+                end_offset = min(manifest.size, offset + len(content))
+                length = max(end_offset - offset, 0)
+                content = content[:length]
 
             # No-op
             if not content:
                 return 0
 
             # Prepare
-            offset = normalize_offset(offset, cursor, manifest)
-            start, padded_content = pad_content(offset, manifest.size, content)
-            block_access = BlockAccess.from_block(padded_content, start)
+            offset = normalize_argument(offset, manifest)
+            manifest, write_operations, removed_ids = prepare_write(manifest, len(content), offset)
 
-            new_offset = offset + len(content)
-            new_size = max(manifest.size, new_offset)
+            # Writing
+            for chunk, offset in write_operations:
+                self._write_count[fd] += await self._write_chunk(chunk, content, offset)
 
-            manifest = manifest.evolve_and_mark_updated(
-                dirty_blocks=(*manifest.dirty_blocks, block_access), size=new_size
+            # Atomic change
+            await self.local_storage.set_manifest(
+                manifest.id, manifest, cache_only=True, removed_ids=removed_ids
             )
 
-            # Atomic change
-            self.local_storage.set_dirty_block(block_access, padded_content)
-            self.local_storage.set_dirty_manifest(cursor.access, manifest)
-            cursor.offset = new_offset
+            # Reshaping
+            if self._write_count[fd] >= manifest.blocksize:
+                await self._manifest_reshape(manifest, cache_only=True)
+                self._write_count.pop(fd, None)
 
         # Notify
-        self._send_event("fs.entry.updated", id=cursor.access.id)
+        self._send_event("fs.entry.updated", id=manifest.id)
         return len(content)
 
-    async def fd_resize(self, fd: FileDescriptor, length: int) -> None:
+    async def fd_resize(self, fd: FileDescriptor, length: int, truncate_only=False) -> None:
         # Fetch and lock
-        async with self._load_and_lock_file(fd) as (cursor, manifest):
+        async with self._load_and_lock_file(fd) as manifest:
 
-            # No-op
-            if manifest.size == length:
+            # Truncate only
+            if truncate_only and manifest.size <= length:
                 return
 
-            # Prepare
-            dirty_blocks = manifest.dirty_blocks
-            start, padded_content = pad_content(length, manifest.size)
-            block_access = BlockAccess.from_block(padded_content, start)
-            if padded_content:
-                dirty_blocks += (block_access,)
-            manifest = manifest.evolve_and_mark_updated(dirty_blocks=dirty_blocks, size=length)
-
-            # Atomic change
-            if padded_content:
-                self.local_storage.set_dirty_block(block_access, padded_content)
-            self.local_storage.set_dirty_manifest(cursor.access, manifest)
+            # Perform the resize operation
+            await self._manifest_resize(manifest, length)
 
         # Notify
-        self._send_event("fs.entry.updated", id=cursor.access.id)
+        self._send_event("fs.entry.updated", id=manifest.id)
 
-    async def fd_read(self, fd: FileDescriptor, size: int = -1, offset: int = None) -> bytes:
+    async def fd_read(self, fd: FileDescriptor, size: int, offset: int, raise_eof=False) -> bytes:
         # Loop over attemps
         missing = []
         while True:
 
             # Load missing blocks
-            # TODO: add a `load_blocks` method to the remote loader
-            # to download the blocks in a concurrent way.
-            for access in missing:
-                await self.remote_loader.load_block(access)
+            await self.remote_loader.load_blocks(missing)
 
             # Fetch and lock
-            async with self._load_and_lock_file(fd) as (cursor, manifest):
+            async with self._load_and_lock_file(fd) as manifest:
+
+                # End of file
+                if raise_eof and offset >= manifest.size:
+                    raise FSEndOfFileError()
+
+                # Normalize
+                offset = normalize_argument(offset, manifest)
+                size = normalize_argument(size, manifest)
 
                 # No-op
-                offset = normalize_offset(offset, cursor, manifest)
-                if offset is not None and offset > manifest.size:
+                if offset > manifest.size:
                     return b""
 
                 # Prepare
-                start = offset
-                size = manifest.size if size < 0 else size
-                end = min(offset + size, manifest.size)
-                data, missing = self._attempt_read(manifest, start, end)
+                chunks = prepare_read(manifest, size, offset)
+                data, missing = await self._build_data(chunks)
 
-                # Retry
-                if missing:
-                    continue
-
-                # Atomic change
-                cursor.offset = end
-
-                return data
+                # Return the data
+                if not missing:
+                    return data
 
     async def fd_flush(self, fd: FileDescriptor) -> None:
+        async with self._load_and_lock_file(fd) as manifest:
+            await self._manifest_reshape(manifest)
+            await self.local_storage.ensure_manifest_persistent(manifest.id)
+
+    # Transaction helpers
+
+    async def _manifest_resize(self, manifest: LocalFileManifest, length: int) -> None:
+        """This internal helper does not perform any locking."""
         # No-op
-        pass
+        if manifest.size == length:
+            return
+
+        # Prepare
+        manifest, write_operations, removed_ids = prepare_resize(manifest, length)
+
+        # Writing
+        for chunk, offset in write_operations:
+            await self._write_chunk(chunk, b"", offset)
+
+        # Atomic change
+        await self.local_storage.set_manifest(manifest.id, manifest, removed_ids=removed_ids)
+
+    async def _manifest_reshape(
+        self, manifest: LocalFileManifest, cache_only: bool = False
+    ) -> List[BlockID]:
+        """This internal helper does not perform any locking."""
+
+        # Prepare data structures
+        missing = []
+
+        # Perform operations
+        for source, destination, update, removed_ids in prepare_reshape(manifest):
+
+            # Build data block
+            data, extra_missing = await self._build_data(source)
+
+            # Missing data
+            if extra_missing:
+                missing += extra_missing
+                continue
+
+            # Write data if necessary
+            new_chunk = destination.evolve_as_block(data)
+            if source != (destination,):
+                await self._write_chunk(new_chunk, data)
+
+            # Craft the new manifest
+            manifest = update(manifest, new_chunk)
+
+            # Set the new manifest, acting as a checkpoint
+            await self.local_storage.set_manifest(
+                manifest.id, manifest, cache_only=True, removed_ids=removed_ids
+            )
+
+        # Flush if necessary
+        if not cache_only:
+            await self.local_storage.ensure_manifest_persistent(manifest.id)
+
+        # Return missing block ids
+        return missing

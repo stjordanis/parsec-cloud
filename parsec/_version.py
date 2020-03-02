@@ -2,5 +2,4 @@
 
 # This file is imported from __init__.py and exec'd from setup.py
 
-__version__ = "0.12.0"
-__api_version__ = "0.12.0"
+__version__ = "1.7.2+dev"

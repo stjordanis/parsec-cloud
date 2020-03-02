@@ -2,15 +2,14 @@
 
 import os
 import errno
-import pathlib
+from pathlib import Path
 from string import ascii_lowercase
 from contextlib import contextmanager
-
 import attr
 import pytest
 from pendulum import Pendulum
 from hypothesis_trio.stateful import (
-    TrioRuleBasedStateMachine,
+    TrioAsyncioRuleBasedStateMachine,
     initialize,
     invariant,
     rule,
@@ -19,19 +18,20 @@ from hypothesis_trio.stateful import (
 )
 from hypothesis import strategies as st
 
-from parsec.core.types import FsPath
-from parsec.core.backend_connection import BackendCmdsNotFound
+from parsec.core.types import FsPath, EntryID
 from parsec.core.fs.utils import is_folder_manifest
+from parsec.core.fs.storage import WorkspaceStorage
+from parsec.core.fs.exceptions import FSRemoteManifestNotFound
 
-from tests.common import freeze_time
+from tests.common import freeze_time, call_with_control
 
 
 @pytest.mark.trio
-async def test_root_entry_info(entry_transactions):
-    stat = await entry_transactions.entry_info(FsPath("/"))
+async def test_root_entry_info(alice_entry_transactions):
+    stat = await alice_entry_transactions.entry_info(FsPath("/"))
     assert stat == {
         "type": "folder",
-        "id": entry_transactions.workspace_id,
+        "id": alice_entry_transactions.workspace_id,
         "base_version": 0,
         "is_placeholder": True,
         "need_sync": True,
@@ -42,7 +42,9 @@ async def test_root_entry_info(entry_transactions):
 
 
 @pytest.mark.trio
-async def test_file_create(entry_transactions, file_transactions, alice):
+async def test_file_create(alice_entry_transactions, alice_file_transactions, alice):
+    entry_transactions = alice_entry_transactions
+    file_transactions = alice_file_transactions
 
     with freeze_time("2000-01-02"):
         access_id, fd = await entry_transactions.file_create(FsPath("/foo.txt"))
@@ -75,20 +77,58 @@ async def test_file_create(entry_transactions, file_transactions, alice):
 
 
 @pytest.mark.trio
-async def test_create_and_delete(entry_transactions, file_transactions):
+async def test_folder_create_delete(alice_entry_transactions, alice_sync_transactions):
+    entry_transactions = alice_entry_transactions
+    sync_transactions = alice_sync_transactions
+
+    # Create and delete a foo directory
     foo_id = await entry_transactions.folder_create(FsPath("/foo"))
-    bar_id, fd = await entry_transactions.file_create(FsPath("/foo/bar"), open=False)
-    assert fd is None
+    assert await entry_transactions.folder_delete(FsPath("/foo")) == foo_id
 
-    bar_id_2 = await entry_transactions.file_delete(FsPath("/foo/bar"))
-    foo_id_2 = await entry_transactions.folder_delete(FsPath("/foo"))
+    # The directory is not synced
+    manifest = await entry_transactions.local_storage.get_manifest(foo_id)
+    assert manifest.need_sync
 
-    assert bar_id == bar_id_2
-    assert foo_id == foo_id_2
+    # Create and sync a bar directory
+    bar_id = await entry_transactions.folder_create(FsPath("/bar"))
+    remote = await sync_transactions.synchronization_step(bar_id)
+    assert await sync_transactions.synchronization_step(bar_id, remote) is None
+
+    # Remove the bar directory, the manifest is synced
+    assert await entry_transactions.folder_delete(FsPath("/bar")) == bar_id
+    manifest = await entry_transactions.local_storage.get_manifest(bar_id)
+    assert not manifest.need_sync
 
 
 @pytest.mark.trio
-async def test_rename_non_empty_folder(entry_transactions, file_transactions):
+async def test_file_create_delete(alice_entry_transactions, alice_sync_transactions):
+    entry_transactions = alice_entry_transactions
+    sync_transactions = alice_sync_transactions
+
+    # Create and delete a foo file
+    foo_id, fd = await entry_transactions.file_create(FsPath("/foo"), open=False)
+    assert fd is None
+    assert await entry_transactions.file_delete(FsPath("/foo")) == foo_id
+
+    # The file is not synced
+    manifest = await entry_transactions.local_storage.get_manifest(foo_id)
+    assert manifest.need_sync
+
+    # Create and sync a bar file
+    bar_id, fd = await entry_transactions.file_create(FsPath("/bar"), open=False)
+    remote = await sync_transactions.synchronization_step(bar_id)
+    assert await sync_transactions.synchronization_step(bar_id, remote) is None
+
+    # Remove the bar file, the manifest is synced
+    assert await entry_transactions.file_delete(FsPath("/bar")) == bar_id
+    manifest = await entry_transactions.local_storage.get_manifest(bar_id)
+    assert not manifest.need_sync
+
+
+@pytest.mark.trio
+async def test_rename_non_empty_folder(alice_entry_transactions):
+    entry_transactions = alice_entry_transactions
+
     foo_id = await entry_transactions.folder_create(FsPath("/foo"))
     bar_id = await entry_transactions.folder_create(FsPath("/foo/bar"))
     zob_id = await entry_transactions.folder_create(FsPath("/foo/bar/zob"))
@@ -116,7 +156,9 @@ async def test_rename_non_empty_folder(entry_transactions, file_transactions):
 
 
 @pytest.mark.trio
-async def test_cannot_replace_root(entry_transactions):
+async def test_cannot_replace_root(alice_entry_transactions):
+    entry_transactions = alice_entry_transactions
+
     with pytest.raises(PermissionError):
         await entry_transactions.file_create(FsPath("/"), open=False)
     with pytest.raises(PermissionError):
@@ -131,19 +173,23 @@ async def test_cannot_replace_root(entry_transactions):
 
 
 @pytest.mark.trio
-async def test_access_not_loaded_entry(alice, bob, entry_transactions):
-    access = entry_transactions.get_workspace_entry().access
-    manifest = entry_transactions.local_storage.get_manifest(access)
-    entry_transactions.local_storage.clear_manifest(access)
+async def test_access_not_loaded_entry(alice, bob, alice_entry_transactions):
+    entry_transactions = alice_entry_transactions
 
-    with pytest.raises(BackendCmdsNotFound):
+    entry_id = entry_transactions.get_workspace_entry().id
+    manifest = await entry_transactions.local_storage.get_manifest(entry_id)
+    async with entry_transactions.local_storage.lock_entry_id(entry_id):
+        await entry_transactions.local_storage.clear_manifest(entry_id)
+
+    with pytest.raises(FSRemoteManifestNotFound):
         await entry_transactions.entry_info(FsPath("/"))
 
-    entry_transactions.local_storage.set_dirty_manifest(access, manifest)
+    async with entry_transactions.local_storage.lock_entry_id(entry_id):
+        await entry_transactions.local_storage.set_manifest(entry_id, manifest)
     entry_info = await entry_transactions.entry_info(FsPath("/"))
     assert entry_info == {
         "type": "folder",
-        "id": access.id,
+        "id": entry_id,
         "created": Pendulum(2000, 1, 1),
         "updated": Pendulum(2000, 1, 1),
         "base_version": 0,
@@ -154,7 +200,9 @@ async def test_access_not_loaded_entry(alice, bob, entry_transactions):
 
 
 @pytest.mark.trio
-async def test_access_unknown_entry(entry_transactions):
+async def test_access_unknown_entry(alice_entry_transactions):
+    entry_transactions = alice_entry_transactions
+
     with pytest.raises(FileNotFoundError):
         await entry_transactions.entry_info(FsPath("/dummy"))
 
@@ -189,15 +237,17 @@ class PathElement:
         return FsPath(self.absolute_path)
 
     def __truediv__(self, path):
-        return PathElement(os.path.join(self.absolute_path, path), self.oracle_root)
+        assert isinstance(path, str) and path[0] != "/"
+        absolute_path = f"/{path}" if self.absolute_path == "/" else f"{self.absolute_path}/{path}"
+        return PathElement(absolute_path, self.oracle_root)
 
 
 @pytest.mark.slow
 @pytest.mark.skipif(os.name == "nt", reason="Windows path style not compatible with oracle")
-def test_folder_operations(
+def test_entry_transactions(
     tmpdir,
     hypothesis_settings,
-    local_storage_factory,
+    reset_testbed,
     entry_transactions_factory,
     file_transactions_factory,
     alice,
@@ -208,26 +258,40 @@ def test_folder_operations(
     # The point is not to find breaking filenames here, so keep it simple
     st_entry_name = st.text(alphabet=ascii_lowercase, min_size=1, max_size=3)
 
-    class FileOperationsStateMachine(TrioRuleBasedStateMachine):
+    class EntryTransactionsStateMachine(TrioAsyncioRuleBasedStateMachine):
         Files = Bundle("file")
         Folders = Bundle("folder")
+
+        async def start_transactions(self):
+            async def _transactions_controlled_cb(started_cb):
+                async with WorkspaceStorage.run(alice, Path("/dummy"), EntryID()) as local_storage:
+                    entry_transactions = await entry_transactions_factory(
+                        self.device, alice_backend_cmds, local_storage=local_storage
+                    )
+                    file_transactions = await file_transactions_factory(
+                        self.device, alice_backend_cmds, local_storage=local_storage
+                    )
+                    await started_cb(
+                        entry_transactions=entry_transactions, file_transactions=file_transactions
+                    )
+
+            self.transactions_controller = await self.get_root_nursery().start(
+                call_with_control, _transactions_controlled_cb
+            )
 
         @initialize(target=Folders)
         async def init_root(self):
             nonlocal tentative
             tentative += 1
+            await reset_testbed()
 
             self.last_step_id_to_path = set()
             self.device = alice
-            self.local_storage = local_storage_factory(self.device)
-            self.entry_transactions = entry_transactions_factory(
-                self.device, self.local_storage, alice_backend_cmds
-            )
-            self.file_transactions = file_transactions_factory(
-                self.device, self.local_storage, alice_backend_cmds
-            )
+            await self.start_transactions()
+            self.entry_transactions = self.transactions_controller.entry_transactions
+            self.file_transactions = self.transactions_controller.file_transactions
 
-            self.folder_oracle = pathlib.Path(tmpdir / f"oracle-test-{tentative}")
+            self.folder_oracle = Path(tmpdir / f"oracle-test-{tentative}")
             self.folder_oracle.mkdir()
             oracle_root = self.folder_oracle / "root"
             oracle_root.mkdir()
@@ -275,6 +339,17 @@ def test_folder_operations(
             with expect_raises(expected_exc):
                 await self.entry_transactions.file_delete(path.to_parsec())
 
+        @rule(path=Files, length=st.integers(min_value=0, max_value=32))
+        async def resize(self, path, length):
+            expected_exc = None
+            try:
+                os.truncate(path.to_oracle(), length)
+            except OSError as exc:
+                expected_exc = exc
+
+            with expect_raises(expected_exc):
+                await self.entry_transactions.file_resize(path.to_parsec(), length)
+
         @rule(path=Folders)
         async def rmdir(self, path):
             expected_exc = None
@@ -316,26 +391,26 @@ def test_folder_operations(
                 return
 
             local_storage = self.entry_transactions.local_storage
-            root_access = self.entry_transactions.get_workspace_entry().access
+            root_entry_id = self.entry_transactions.get_workspace_entry().id
             new_id_to_path = set()
 
-            def _recursive_build_id_to_path(access, path):
-                new_id_to_path.add((access.id, path))
-                manifest = local_storage.get_manifest(access)
+            async def _recursive_build_id_to_path(entry_id, parent_id):
+                new_id_to_path.add((entry_id, parent_id))
+                manifest = await local_storage.get_manifest(entry_id)
                 if is_folder_manifest(manifest):
-                    for child_name, child_access in manifest.children.items():
-                        _recursive_build_id_to_path(child_access, path / "child_name")
+                    for child_name, child_entry_id in manifest.children.items():
+                        await _recursive_build_id_to_path(child_entry_id, entry_id)
 
-            _recursive_build_id_to_path(root_access, FsPath("/"))
+            await _recursive_build_id_to_path(root_entry_id, None)
 
             added_items = new_id_to_path - self.last_step_id_to_path
-            for added_id, added_path in added_items:
-                for old_id, old_path in self.last_step_id_to_path:
-                    if old_id == added_id and added_path.parent != old_path.parent:
+            for added_id, added_parent in added_items:
+                for old_id, old_parent in self.last_step_id_to_path:
+                    if old_id == added_id and added_parent != old_parent.parent:
                         raise AssertionError(
-                            f"Same id ({old_id}) but different path: {old_path} -> {added_path}"
+                            f"Same id ({old_id}) but different parent: {old_parent} -> {added_parent}"
                         )
 
             self.last_step_id_to_path = new_id_to_path
 
-    run_state_machine_as_test(FileOperationsStateMachine, settings=hypothesis_settings)
+    run_state_machine_as_test(EntryTransactionsStateMachine, settings=hypothesis_settings)

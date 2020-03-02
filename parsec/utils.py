@@ -2,6 +2,22 @@
 
 import attr
 import trio
+from pendulum import Pendulum
+
+from parsec.monitoring import TaskMonitoringInstrument
+from parsec.service_nursery import open_service_nursery
+
+__all__ = ["timestamps_in_the_ballpark", "start_task", "trio_run", "open_service_nursery"]
+
+TIMESTAMP_MAX_DT = 30 * 60
+
+
+def timestamps_in_the_ballpark(ts1: Pendulum, ts2: Pendulum, max_dt=TIMESTAMP_MAX_DT) -> bool:
+    """
+    Useful to compare signed message timestamp with the one stored by the
+    backend.
+    """
+    return abs((ts1 - ts2).total_seconds()) < max_dt
 
 
 # Task status
@@ -58,7 +74,7 @@ class TaskStatus:
     async def wrap_task(cls, corofn, *args, task_status=trio.TASK_STATUS_IGNORED):
         status = cls()
         try:
-            async with trio.open_nursery() as nursery:
+            async with trio.open_service_nursery() as nursery:
                 status._set_cancel_scope(nursery.cancel_scope)
                 value = await nursery.start(corofn, *args)
                 status._set_started_value(value)
@@ -74,3 +90,13 @@ async def start_task(nursery, corofn, *args, name=None):
     It also contains the started value set by `task_status.started()`.
     """
     return await nursery.start(TaskStatus.wrap_task, corofn, *args, name=name)
+
+
+def trio_run(async_fn, *args, use_asyncio=False):
+    if use_asyncio:
+        # trio_asyncio is an optional dependency
+        import trio_asyncio
+
+        return trio_asyncio.run(async_fn, *args)
+    instruments = (TaskMonitoringInstrument(),)
+    return trio.run(async_fn, *args, instruments=instruments)

@@ -12,3 +12,25 @@ repos:
     rev: 3.7.7
     hooks:
     - id: flake8
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v2.2.3  # Use the ref you want to point at
+    hooks:
+    - id: mixed-line-ending
+      args:
+        - "--fix=lf"
+    - id: trailing-whitespace
+-   repo: local
+    hooks:
+    - id: releaser
+      name: releaser
+      entry: python ./misc/releaser.py check
+      language: python
+      language_version: python3
+      pass_filenames: false
+      require_serial: true
+    - id: license_headers
+      name: license_headers
+      entry: python ./misc/license_headers.py add
+      language: python
+      language_version: python3
+      types: [python]

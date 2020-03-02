@@ -22,9 +22,8 @@ st_entry_name = st.text(alphabet=ascii_lowercase, min_size=1, max_size=3)
 
 
 class expect_raises:
-    def __init__(self, expected_exc, fallback_exc=None):
+    def __init__(self, expected_exc):
         self.expected_exc = expected_exc
-        self.fallback_exc = fallback_exc
 
     def __enter__(self):
         __tracebackhide__ = True
@@ -39,10 +38,14 @@ class expect_raises:
         if not exc_type:
             raise AssertionError(f"DID NOT RAISED {self.expected_exc!r}")
 
-        if self.fallback_exc:
-            allowed = (type(self.expected_exc), type(self.fallback_exc))
+        # WinFSP error handling is not stricly similar to the real
+        # Windows file system; so we often endup with the wrong exception
+        # (e.g. `NotADirectoryError` when we expect `FileNotFoundError`)
+        if os.name == "nt":
+            allowed = OSError
         else:
             allowed = type(self.expected_exc)
+
         if not isinstance(exc_value, allowed):
             raise AssertionError(
                 f"RAISED {exc_value!r} BUT EXPECTED {self.expected_exc!r}"
@@ -73,23 +76,17 @@ class PathElement:
         return self.oracle_root / self.absolute_path[1:]
 
     def to_parsec(self):
-        root, workspace, *tail = Path(self.absolute_path).parts
-
-        # Do not allow to go outside the inital workspace
-        assert str(self.parsec_root).endswith(workspace)
-
-        return self.parsec_root / Path(*tail)
+        return self.parsec_root / self.absolute_path[1:]
 
     def __truediv__(self, path):
-        return PathElement(
-            os.path.join(self.absolute_path, path), self.parsec_root, self.oracle_root
-        )
+        assert isinstance(path, str) and path[0] != "/"
+        absolute_path = f"/{path}" if self.absolute_path == "/" else f"{self.absolute_path}/{path}"
+        return PathElement(absolute_path, self.parsec_root, self.oracle_root)
 
 
 @pytest.mark.slow
-@pytest.mark.linux  # TODO: investigate while this fails on windows
 @pytest.mark.mountpoint
-def test_folder_operations(tmpdir, hypothesis_settings, mountpoint_service):
+def test_folder_operations(tmpdir, caplog, hypothesis_settings, mountpoint_service_factory):
 
     tentative = 0
 
@@ -103,42 +100,39 @@ def test_folder_operations(tmpdir, hypothesis_settings, mountpoint_service):
         def init(self):
             nonlocal tentative
             tentative += 1
+            caplog.clear()
 
-            mountpoint_service.start()
+            async def _bootstrap(user_fs, mountpoint_manager):
+                wid = await user_fs.workspace_create("w")
+                await mountpoint_manager.mount_workspace(wid)
+
+            self.mountpoint_service = mountpoint_service_factory(_bootstrap)
 
             self.folder_oracle = Path(tmpdir / f"oracle-test-{tentative}")
             self.folder_oracle.mkdir()
             oracle_root = self.folder_oracle / "root"
             oracle_root.mkdir()
             self.folder_oracle.chmod(0o500)  # Root oracle can no longer be removed this way
-            (oracle_root / mountpoint_service.default_workspace_name).mkdir()
+            (oracle_root / "w").mkdir()
             oracle_root.chmod(0o500)  # Also protect workspace from deletion
 
-            return PathElement(
-                f"/{mountpoint_service.default_workspace_name}",
-                mountpoint_service.get_default_workspace_mountpoint(),
-                oracle_root,
-            )
+            return PathElement(f"/w", self.mountpoint_service.base_mountpoint, oracle_root)
 
         def teardown(self):
-            mountpoint_service.stop()
+            if hasattr(self, "mountpoint_service"):
+                self.mountpoint_service.stop()
 
         @rule(target=Files, parent=Folders, name=st_entry_name)
         def touch(self, parent, name):
             path = parent / name
 
             expected_exc = None
-            fallback_exc = None
             try:
                 path.to_oracle().touch(exist_ok=False)
             except OSError as exc:
                 expected_exc = exc
-                # WinFSP raises `OSError(22, 'Invalid argument')` instead
-                # of `FileNotFoundError(2, 'No such file or directory')`
-                if os.name == "nt" and isinstance(exc, FileNotFoundError):
-                    fallback_exc = OSError(22, "Invalid argument")
 
-            with expect_raises(expected_exc, fallback_exc):
+            with expect_raises(expected_exc):
                 path.to_parsec().touch(exist_ok=False)
 
             return path
@@ -148,17 +142,12 @@ def test_folder_operations(tmpdir, hypothesis_settings, mountpoint_service):
             path = parent / name
 
             expected_exc = None
-            fallback_exc = None
             try:
                 path.to_oracle().mkdir(exist_ok=False)
             except OSError as exc:
                 expected_exc = exc
-                # WinFSP raises `NotADirectoryError(20, 'The directory name is invalid')`
-                # instead of `FileNotFoundError(2, 'The system cannot find the path specified')`
-                if os.name == "nt" and isinstance(exc, FileNotFoundError):
-                    fallback_exc = NotADirectoryError(20, "The directory name is invalid")
 
-            with expect_raises(expected_exc, fallback_exc):
+            with expect_raises(expected_exc):
                 path.to_parsec().mkdir(exist_ok=False)
 
             return path
@@ -173,6 +162,17 @@ def test_folder_operations(tmpdir, hypothesis_settings, mountpoint_service):
 
             with expect_raises(expected_exc):
                 path.to_parsec().unlink()
+
+        @rule(path=Files, length=st.integers(min_value=0, max_value=16))
+        def resize(self, path, length):
+            expected_exc = None
+            try:
+                os.truncate(path.to_oracle(), length)
+            except OSError as exc:
+                expected_exc = exc
+
+            with expect_raises(expected_exc):
+                os.truncate(path.to_parsec(), length)
 
         @rule(path=NonRootFolder)
         def rmdir(self, path):

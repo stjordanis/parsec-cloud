@@ -1,39 +1,64 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-import inspect
-from typing import Union, Iterator, Dict
-from uuid import UUID
+import attr
+import trio
+from collections import defaultdict
+from typing import Union, Iterator, Dict, Tuple
+from pendulum import Pendulum, now as pendulum_now
 
-from parsec.types import UserID
-from parsec.core.types import FsPath, AccessID, WorkspaceRole
-from parsec.core.backend_connection import (
-    BackendNotAvailable,
-    BackendCmdsNotAllowed,
-    BackendConnectionError,
+from parsec.api.data import Manifest as RemoteManifest
+from parsec.api.protocol import UserID
+from parsec.core.types import (
+    FsPath,
+    EntryID,
+    LocalDevice,
+    WorkspaceRole,
+    LocalFolderishManifests,
+    LocalFileManifest,
+    DEFAULT_BLOCK_SIZE,
 )
-from parsec.core.fs.workspacefs.file_transactions import FileTransactions
-from parsec.core.fs.workspacefs.entry_transactions import EntryTransactions
-from parsec.core.fs.exceptions import FSError, FSBackendOfflineError
-
-# Legacy
-from parsec.core.fs.local_folder_fs import FSManifestLocalMiss, FSMultiManifestLocalMiss
-
+from parsec.core.fs import workspacefs
+from parsec.core.fs.remote_loader import RemoteLoader
+from parsec.core.fs.workspacefs.sync_transactions import SyncTransactions
+from parsec.core.fs.workspacefs.versioning_helpers import VersionLister
+from parsec.core.fs.utils import is_file_manifest, is_folderish_manifest
+from parsec.core.fs.exceptions import (
+    FSRemoteManifestNotFound,
+    FSRemoteManifestNotFoundBadVersion,
+    FSRemoteSyncError,
+    FSNoSynchronizationRequired,
+    FSFileConflictError,
+    FSReshapingRequiredError,
+    FSWorkspaceNoAccess,
+    FSWorkspaceTimestampedTooEarly,
+    FSLocalMissError,
+    FSInvalidArgumentError,
+    FSNotADirectoryError,
+)
 
 AnyPath = Union[FsPath, str]
+
+
+@attr.s(frozen=True)
+class ReencryptionNeed:
+    user_revoked: Tuple[UserID] = attr.ib(factory=tuple)
+    role_revoked: Tuple[UserID] = attr.ib(factory=tuple)
+
+    @property
+    def need_reencryption(self):
+        return self.role_revoked or self.user_revoked
 
 
 class WorkspaceFS:
     def __init__(
         self,
-        workspace_id,
+        workspace_id: EntryID,
         get_workspace_entry,
-        device,
+        device: LocalDevice,
         local_storage,
         backend_cmds,
         event_bus,
-        _local_folder_fs,
-        _remote_loader,
-        _syncer,
+        remote_device_manager,
     ):
         self.workspace_id = workspace_id
         self.get_workspace_entry = get_workspace_entry
@@ -41,106 +66,209 @@ class WorkspaceFS:
         self.local_storage = local_storage
         self.backend_cmds = backend_cmds
         self.event_bus = event_bus
-        self._local_folder_fs = _local_folder_fs
-        self._remote_loader = _remote_loader
-        self._syncer = _syncer
+        self.remote_device_manager = remote_device_manager
+        self.sync_locks = defaultdict(trio.Lock)
 
-        self.file_transactions = FileTransactions(
-            self.workspace_id, local_storage, self._remote_loader, event_bus
+        self.remote_loader = RemoteLoader(
+            self.device,
+            self.workspace_id,
+            self.get_workspace_entry,
+            self.backend_cmds,
+            self.remote_device_manager,
+            self.local_storage,
         )
-        self.entry_transactions = EntryTransactions(
+        self.transactions = SyncTransactions(
             self.workspace_id,
             self.get_workspace_entry,
             self.device,
-            local_storage,
-            self._remote_loader,
-            event_bus,
+            self.local_storage,
+            self.remote_loader,
+            self.event_bus,
         )
 
-    @property
-    def workspace_name(self) -> str:
+    def __repr__(self):
+        try:
+            name = self.get_workspace_name()
+        except Exception:
+            name = "<could not retreive name>"
+        return f"<{type(self).__name__}(id={self.workspace_id!r}, name={name!r})>"
+
+    def get_workspace_name(self) -> str:
         return self.get_workspace_entry().name
+
+    def get_encryption_revision(self) -> int:
+        return self.get_workspace_entry().encryption_revision
 
     # Information
 
     async def path_info(self, path: AnyPath) -> dict:
-        return await self.entry_transactions.entry_info(FsPath(path))
+        """
+        Raises:
+            FSError
+        """
+        return await self.transactions.entry_info(FsPath(path))
 
-    # TODO: remove this once workspace widget has been reworked
-    async def workspace_info(self):
-        try:
-            roles = await self.get_user_roles()
-        except FSBackendOfflineError:
-            roles = {self.device.user_id: self.get_workspace_entry().role}
-
-        return {
-            "participants": list(roles.keys()),
-            "creator": next(
-                user_id for user_id, role in roles.items() if role == WorkspaceRole.OWNER
-            ),
-        }
+    async def path_id(self, path: AnyPath) -> EntryID:
+        """
+        Raises:
+            FSError
+        """
+        info = await self.transactions.entry_info(FsPath(path))
+        return info["id"]
 
     async def get_user_roles(self) -> Dict[UserID, WorkspaceRole]:
         """
         Raises:
             FSError
-            FSWorkspaceNotFoundError
             FSBackendOfflineError
         """
         try:
-            return await self.backend_cmds.vlob_group_get_roles(self.workspace_id)
+            workspace_manifest = await self.local_storage.get_manifest(self.workspace_id)
+            if workspace_manifest.is_placeholder:
+                return {self.device.user_id: WorkspaceRole.OWNER}
 
-        except BackendNotAvailable as exc:
-            raise FSBackendOfflineError(str(exc)) from exc
+        except FSLocalMissError:
+            pass
 
-        except BackendCmdsNotAllowed:
+        try:
+            return await self.remote_loader.load_realm_current_roles()
+
+        except FSWorkspaceNoAccess:
             # Seems we lost all the access roles
             return {}
 
-        except BackendConnectionError as exc:
-            raise FSError(f"Cannot retrieve workspace per-user roles: {exc}") from exc
+    async def get_reencryption_need(self) -> ReencryptionNeed:
+        """
+        Raises:
+            FSError
+            FSBackendOfflineError
+            FSWorkspaceNoAccess
+        """
+        wentry = self.get_workspace_entry()
+        try:
+            workspace_manifest = await self.local_storage.get_manifest(self.workspace_id)
+            if workspace_manifest.is_placeholder:
+                return ReencryptionNeed()
+
+        except FSLocalMissError:
+            pass
+
+        certificates = await self.remote_loader.load_realm_role_certificates()
+        has_role = set()
+        role_revoked = set()
+        for certif in certificates:
+            if certif.role is None:
+                if certif.timestamp > wentry.encrypted_on:
+                    role_revoked.add(certif.user_id)
+                has_role.discard(certif.user_id)
+            else:
+                role_revoked.discard(certif.user_id)
+                has_role.add(certif.user_id)
+
+        user_revoked = []
+        for user_id in has_role:
+            _, revoked_user = await self.remote_device_manager.get_user(user_id, no_cache=True)
+            if revoked_user and revoked_user.timestamp > wentry.encrypted_on:
+                user_revoked.append(user_id)
+
+        return ReencryptionNeed(user_revoked=tuple(user_revoked), role_revoked=tuple(role_revoked))
+
+    # Versioning
+
+    async def get_earliest_timestamp(self) -> Pendulum:
+        """
+        Get the earliest timestamp from which we can obtain a timestamped workspace
+
+        Verify the obtained timestamp is in the ballpark of the manifest at version 0
+
+        Raises:
+            FSError
+        """
+        manifest = await self.remote_loader.load_manifest(self.get_workspace_entry().id, version=1)
+        return manifest.timestamp
+
+    def get_version_lister(self):
+        return VersionLister(self)
+
+    # Timestamped version
+
+    async def to_timestamped(self, timestamp: Pendulum):
+        workspace = workspacefs.WorkspaceFSTimestamped(self, timestamp)
+        try:
+            await workspace.path_info("/")
+        except FSRemoteManifestNotFoundBadVersion as exc:
+            raise FSWorkspaceTimestampedTooEarly from exc
+
+        return workspace
 
     # Pathlib-like interface
 
     async def exists(self, path: AnyPath) -> bool:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
         try:
-            if await self.entry_transactions.entry_info(path):
-                return True
-        except FileNotFoundError:
+            await self.transactions.entry_info(path)
+        except (FileNotFoundError, NotADirectoryError):
             return False
-        return False
+        return True
 
     async def is_dir(self, path: AnyPath) -> bool:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        info = await self.entry_transactions.entry_info(path)
+        info = await self.transactions.entry_info(path)
         return info["type"] == "folder"
 
     async def is_file(self, path: AnyPath) -> bool:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        info = await self.entry_transactions.entry_info(FsPath(path))
+        info = await self.transactions.entry_info(FsPath(path))
         return info["type"] == "file"
 
     async def iterdir(self, path: AnyPath) -> Iterator[FsPath]:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        info = await self.entry_transactions.entry_info(path)
+        info = await self.transactions.entry_info(path)
         if "children" not in info:
-            raise NotADirectoryError(str(path))
+            raise FSNotADirectoryError(filename=str(path))
         for child in info["children"]:
             yield path / child
 
     async def listdir(self, path: AnyPath) -> Iterator[FsPath]:
+        """
+        Raises:
+            FSError
+        """
         return [child async for child in self.iterdir(path)]
 
     async def rename(self, source: AnyPath, destination: AnyPath, overwrite: bool = True) -> None:
+        """
+        Raises:
+            FSError
+        """
         source = FsPath(source)
         destination = FsPath(destination)
-        await self.entry_transactions.entry_rename(source, destination, overwrite=overwrite)
+        await self.transactions.entry_rename(source, destination, overwrite=overwrite)
 
     async def mkdir(self, path: AnyPath, parents: bool = False, exist_ok: bool = False) -> None:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
         try:
-            await self.entry_transactions.folder_create(path)
+            await self.transactions.folder_create(path)
         except FileNotFoundError:
             if not parents or path.parent == path:
                 raise
@@ -151,58 +279,90 @@ class WorkspaceFS:
                 raise
 
     async def rmdir(self, path: AnyPath) -> None:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        await self.entry_transactions.folder_delete(path)
+        await self.transactions.folder_delete(path)
 
     async def touch(self, path: AnyPath, exist_ok: bool = True) -> None:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
         try:
-            await self.entry_transactions.file_create(path, open=False)
+            await self.transactions.file_create(path, open=False)
         except FileExistsError:
-            if not exist_ok or not await self.is_file(path):
+            if not exist_ok:
                 raise
 
     async def unlink(self, path: AnyPath) -> None:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        await self.entry_transactions.file_delete(path)
+        await self.transactions.file_delete(path)
 
     async def truncate(self, path: AnyPath, length: int) -> None:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        _, fd = await self.entry_transactions.file_open(path, "w")
-        try:
-            return await self.file_transactions.fd_resize(fd, length)
-        finally:
-            await self.file_transactions.fd_close(fd)
+        await self.transactions.file_resize(path, length)
 
     async def read_bytes(self, path: AnyPath, size: int = -1, offset: int = 0) -> bytes:
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        _, fd = await self.entry_transactions.file_open(path, "r")
+        _, fd = await self.transactions.file_open(path, "r")
         try:
-            return await self.file_transactions.fd_read(fd, size, offset)
+            return await self.transactions.fd_read(fd, size, offset)
         finally:
-            await self.file_transactions.fd_close(fd)
+            await self.transactions.fd_close(fd)
 
-    async def write_bytes(self, path: AnyPath, data: bytes, offset: int = 0) -> int:
+    async def write_bytes(
+        self, path: AnyPath, data: bytes, offset: int = 0, truncate: bool = True
+    ) -> int:
+        """
+        The offset value is used to determine the index of the writing operation.
+        If the offset is negative, we append the new bytes to the current content.
+        If the truncate argument is set to True, the offset argument is also used to resize the file.
+        Raises:
+            FSError
+        """
         path = FsPath(path)
-        _, fd = await self.entry_transactions.file_open(path, "w")
+        _, fd = await self.transactions.file_open(path, "w")
         try:
-            return await self.file_transactions.fd_write(fd, data, offset)
+            if offset >= 0 and truncate:
+                await self.transactions.fd_resize(fd, offset)
+            return await self.transactions.fd_write(fd, data, offset)
         finally:
-            await self.file_transactions.fd_close(fd)
+            await self.transactions.fd_close(fd)
 
     # Shutil-like interface
 
     async def move(self, source: AnyPath, destination: AnyPath):
         """
         Raises:
-            FileExistsError
+            FSError
         """
         source = FsPath(source)
         destination = FsPath(destination)
         real_destination = destination
+
+        if source.parts == destination.parts[: len(source.parts)]:
+            raise FSInvalidArgumentError(
+                f"Cannot move a directory {source} into itself {destination}"
+            )
         try:
             if await self.is_dir(destination):
-                real_destination = destination.joinpath(source.name)
+                real_destination = destination / source.name
                 if await self.exists(real_destination):
                     raise FileExistsError
         # At this point, real_destination is the target either representing :
@@ -210,24 +370,20 @@ class WorkspaceFS:
         # - a new entry with the same name as source, but inside the destination directory
         except FileNotFoundError:
             pass
+
+        # Rename if possible
         if source.parent == real_destination.parent:
             return await self.rename(source, real_destination)
-        elif await self.is_dir(source):
+
+        # Copy directory
+        if await self.is_dir(source):
             await self.copytree(source, real_destination)
             await self.rmtree(source)
             return
-        elif await self.is_file(source):
-            await self.copyfile(source, real_destination)
-            await self.unlink(source)
-            return
-        raise NotImplementedError
 
-    def _destinsrc(src: AnyPath, dst: AnyPath):
-        try:
-            dst.relative_to(src)
-            return True
-        except ValueError:
-            return False
+        # Copy file
+        await self.copyfile(source, real_destination)
+        await self.unlink(source)
 
     async def copytree(self, source_path: AnyPath, target_path: AnyPath):
         source_path = FsPath(source_path)
@@ -235,15 +391,23 @@ class WorkspaceFS:
         source_files = await self.listdir(source_path)
         await self.mkdir(target_path)
         for source_file in source_files:
-            target_file = target_path.joinpath(source_file.name)
+            target_file = target_path / source_file.name
             if await self.is_dir(source_file):
                 await self.copytree(source_file, target_file)
             elif await self.is_file(source_file):
                 await self.copyfile(source_file, target_file)
 
     async def copyfile(
-        self, source_path: AnyPath, target_path: AnyPath, length=16 * 1024, exist_ok: bool = False
+        self,
+        source_path: AnyPath,
+        target_path: AnyPath,
+        length=DEFAULT_BLOCK_SIZE,
+        exist_ok: bool = False,
     ):
+        """
+        Raises:
+            FSError
+        """
         await self.touch(target_path, exist_ok=exist_ok)
         offset = 0
         while True:
@@ -254,6 +418,10 @@ class WorkspaceFS:
             offset += 1
 
     async def rmtree(self, path: AnyPath):
+        """
+        Raises:
+            FSError
+        """
         path = FsPath(path)
         async for child in self.iterdir(path):
             if await self.is_dir(child):
@@ -262,37 +430,195 @@ class WorkspaceFS:
                 await self.unlink(child)
         await self.rmdir(path)
 
-    # Left to migrate
+    # Sync helpers
 
-    def _cook_path(self, relative_path=""):
-        workspace_name = self.workspace_name
-        return FsPath(f"/{workspace_name}/{relative_path}")
+    async def _synchronize_placeholders(self, manifest: LocalFolderishManifests) -> None:
+        async for child in self.transactions.get_placeholder_children(manifest):
+            await self.minimal_sync(child)
 
-    async def _load_and_retry(self, fn, *args, **kwargs):
-        while True:
+    async def _upload_blocks(self, manifest: LocalFileManifest) -> None:
+        for access in manifest.blocks:
             try:
-                if inspect.iscoroutinefunction(fn):
-                    return await fn(*args, **kwargs)
-                else:
-                    return fn(*args, **kwargs)
+                data = await self.local_storage.get_dirty_block(access.id)
+            except FSLocalMissError:
+                continue
+            await self.remote_loader.upload_block(access, data)
 
-            except FSManifestLocalMiss as exc:
-                await self._remote_loader.load_manifest(exc.access)
+    async def minimal_sync(self, entry_id: EntryID) -> None:
+        """
+        Raises:
+            FSError
+        """
+        # Make sure the corresponding realm exists
+        await self._create_realm_if_needed()
 
-            except FSMultiManifestLocalMiss as exc:
-                for access in exc.accesses:
-                    await self._remote_loader.load_manifest(access)
+        # Get a minimal manifest to upload
+        try:
+            remote_manifest = await self.transactions.get_minimal_remote_manifest(entry_id)
+        # Not available locally so nothing to synchronize
+        except FSLocalMissError:
+            return
 
-    async def sync(self, path: FsPath, recursive: bool = True) -> None:
-        path = self._cook_path(path)
-        await self._load_and_retry(self._syncer.sync, path, recursive=recursive)
+        # No miminal manifest to upload, the entry is not a placeholder
+        if remote_manifest is None:
+            return
 
-    # TODO: do we really need this ? or should we provide id manipulation at this level ?
-    async def sync_by_id(self, entry_id: AccessID) -> None:
-        assert isinstance(entry_id, UUID)
-        await self._load_and_retry(self._syncer.sync_by_id, entry_id)
+        # Upload the miminal manifest
+        try:
+            await self.remote_loader.upload_manifest(entry_id, remote_manifest)
+        # The upload has failed: download the latest remote manifest
+        except FSRemoteSyncError:
+            remote_manifest = await self.remote_loader.load_manifest(entry_id)
 
-    async def get_entry_path(self, id: AccessID) -> FsPath:
-        assert isinstance(id, UUID)
-        path, _, _ = await self._load_and_retry(self._local_folder_fs.get_entry_path, id)
-        return path
+        # Register the manifest to unset the placeholder tag
+        try:
+            await self.transactions.synchronization_step(entry_id, remote_manifest, final=True)
+        # Not available locally so nothing to synchronize
+        except FSLocalMissError:
+            pass
+
+    async def _sync_by_id(self, entry_id: EntryID, remote_changed: bool = True) -> RemoteManifest:
+        """
+        Synchronize the entry corresponding to a specific ID.
+
+        This method keeps performing synchronization steps on the given ID until one of
+        those two conditions is met:
+        - there is no more changes to upload
+        - one upload operation has succeeded and has been acknowledged
+
+        This guarantees that any change prior to the call is saved remotely when this
+        method returns.
+        """
+        # Get the current remote manifest if it has changed
+        remote_manifest = None
+        if remote_changed:
+            try:
+                remote_manifest = await self.remote_loader.load_manifest(entry_id)
+            except FSRemoteManifestNotFound:
+                pass
+
+        # Loop over sync transactions
+        final = False
+        while True:
+
+            # Protect against race conditions on the entry id
+            try:
+
+                # Perform the sync step transaction
+                try:
+                    new_remote_manifest = await self.transactions.synchronization_step(
+                        entry_id, remote_manifest, final
+                    )
+
+                # The entry first requires reshaping
+                except FSReshapingRequiredError:
+                    await self.transactions.file_reshape(entry_id)
+                    continue
+
+            # The manifest doesn't exist locally
+            except FSLocalMissError:
+                raise FSNoSynchronizationRequired(entry_id)
+
+            # No new manifest to upload, the entry is synced!
+            if new_remote_manifest is None:
+                return remote_manifest or (await self.local_storage.get_manifest(entry_id)).base
+
+            # Synchronize placeholder children
+            if is_folderish_manifest(new_remote_manifest):
+                await self._synchronize_placeholders(new_remote_manifest)
+
+            # Upload blocks
+            if is_file_manifest(new_remote_manifest):
+                await self._upload_blocks(new_remote_manifest)
+
+            # Restamp the remote manifest
+            new_remote_manifest = new_remote_manifest.evolve(timestamp=pendulum_now())
+
+            # Upload the new manifest containing the latest changes
+            try:
+                await self.remote_loader.upload_manifest(entry_id, new_remote_manifest)
+
+            # The upload has failed: download the latest remote manifest
+            except FSRemoteSyncError:
+                remote_manifest = await self.remote_loader.load_manifest(entry_id)
+
+            # The upload has succeeded: loop one last time to acknowledge this new version
+            else:
+                final = True
+                remote_manifest = new_remote_manifest
+
+    async def _create_realm_if_needed(self):
+        # Get workspace manifest
+        try:
+            workspace_manifest = await self.local_storage.get_manifest(self.workspace_id)
+
+        # Cannot be a placeholder if we know about it but don't have it in local
+        except FSLocalMissError:
+            return
+
+        if workspace_manifest.is_placeholder:
+            await self.remote_loader.create_realm(self.workspace_id)
+
+    async def sync_by_id(
+        self, entry_id: EntryID, remote_changed: bool = True, recursive: bool = True
+    ):
+        """
+        Raises:
+            FSError
+        """
+        # Make sure the corresponding realm exists
+        await self._create_realm_if_needed()
+
+        # Sync parent first
+        try:
+            async with self.sync_locks[entry_id]:
+                manifest = await self._sync_by_id(entry_id, remote_changed=remote_changed)
+
+        # Nothing to synchronize if the manifest does not exist locally
+        except FSNoSynchronizationRequired:
+            return
+
+        # A file conflict needs to be adressed first
+        except FSFileConflictError as exc:
+            local_manifest, remote_manifest = exc.args
+            # Only file manifest have synchronization conflict
+            assert is_file_manifest(local_manifest)
+            await self.transactions.file_conflict(entry_id, local_manifest, remote_manifest)
+            return await self.sync_by_id(local_manifest.parent)
+
+        # Non-recursive
+        if not recursive or is_file_manifest(manifest):
+            return
+
+        # Synchronize children
+        for name, entry_id in manifest.children.items():
+            await self.sync_by_id(entry_id, remote_changed=remote_changed, recursive=True)
+
+    async def sync(self, *, remote_changed: bool = True) -> None:
+        """
+        Raises:
+            FSError
+        """
+        await self.sync_by_id(self.workspace_id, remote_changed=remote_changed, recursive=True)
+
+    # Debugging helper
+
+    async def dump(self):
+        async def rec(entry_id):
+            result = {"id": entry_id}
+            try:
+                manifest = await self.local_storage.get_manifest(entry_id)
+            except FSLocalMissError:
+                return result
+
+            result.update(manifest.asdict())
+            try:
+                children = manifest.children
+            except AttributeError:
+                return result
+
+            for key, value in children.items():
+                result["children"][key] = await rec(value)
+            return result
+
+        return await rec(self.workspace_id)

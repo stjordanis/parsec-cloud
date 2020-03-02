@@ -11,8 +11,8 @@ import telnetlib
 import argparse
 import logging
 
+import trio
 from trio.abc import Instrument
-from trio._threads import BlockingTrioPortal
 from trio.hazmat import current_statistics
 
 
@@ -33,6 +33,15 @@ else:
 END_CONTINUE = " " * len(END_PREFIX)
 
 
+def is_shielded_task(task):
+    cancel_status = task._cancel_status
+    while cancel_status:
+        if cancel_status._scope.shield:
+            return True
+        cancel_status = cancel_status._parent
+    return False
+
+
 def _render_subtree(name, rendered_children):
     lines = []
     lines.append(name)
@@ -49,44 +58,53 @@ def _render_subtree(name, rendered_children):
     return lines
 
 
-def _rendered_nursery_children(nursery):
-    return [task_tree_lines(t) for t in nursery.child_tasks]
+def _rendered_nursery_children(nursery, format_task):
+    return [task_tree_lines(t, format_task) for t in nursery.child_tasks]
 
 
-def task_tree_lines(task):
+def task_tree_lines(task, format_task):
     rendered_children = []
     nurseries = list(task.child_nurseries)
     while nurseries:
         nursery = nurseries.pop()
-        nursery_children = _rendered_nursery_children(nursery)
+        nursery_children = _rendered_nursery_children(nursery, format_task)
         if rendered_children:
             nested = _render_subtree("(nested nursery)", rendered_children)
             nursery_children.append(nested)
         rendered_children = nursery_children
-    return _render_subtree(task.name, rendered_children)
+    return _render_subtree(format_task(task), rendered_children)
 
 
-def render_task_tree(task=None):
-    return "\n".join(line for line in task_tree_lines(task)) + "\n"
+def render_task_tree(task, format_task):
+    return "\n".join(line for line in task_tree_lines(task, format_task)) + "\n"
 
 
 class Monitor(Instrument):
     def __init__(self, host=MONITOR_HOST, port=MONITOR_PORT):
         self.address = (host, port)
-        self._portal = None
+        self._trio_token = None
+        self._next_task_short_id = 0
         self._tasks = {}
         self._closing = None
         self._ui_thread = None
 
+    def get_task_from_short_id(self, shortid):
+        for task in self._tasks.values():
+            if task._monitor_short_id == shortid:
+                return task
+        return None
+
     def before_run(self):
         LOGGER.info("Starting Trio monitor at %s:%d", *self.address)
-        self._portal = BlockingTrioPortal()
+        self._trio_token = trio.hazmat.current_trio_token()
         self._ui_thread = threading.Thread(target=self.server, args=(), daemon=True)
         self._closing = threading.Event()
         self._ui_thread.start()
 
     def task_spawned(self, task):
         self._tasks[id(task)] = task
+        task._monitor_short_id = self._next_task_short_id
+        self._next_task_short_id += 1
         task._monitor_state = "spawned"
 
     def task_scheduled(self, task):
@@ -232,7 +250,7 @@ class Monitor(Instrument):
         async def get_current_statistics():
             return current_statistics()
 
-        stats = self._portal.run(get_current_statistics)
+        stats = trio.from_thread.run(get_current_statistics, trio_token=self._trio_token)
         sout.write(
             """tasks_living: {s.tasks_living}
 tasks_runnable: {s.tasks_runnable}
@@ -248,29 +266,46 @@ io_statistics:
         )
 
     def command_ps(self, sout):
-        headers = ("Task", "State", "Task")
-        widths = (15, 12, 50)
+        headers = ("Id", "State", "Shielded", "Task")
+        widths = (5, 10, 10, 50)
         for h, w in zip(headers, widths):
             sout.write("%-*s " % (w, h))
         sout.write("\n")
         sout.write(" ".join(w * "-" for w in widths))
         sout.write("\n")
-        for taskid in sorted(self._tasks):
-            task = self._tasks[taskid]
+        for task in sorted(self._tasks.values(), key=lambda t: t._monitor_short_id):
             sout.write(
-                "%-*d %-*s %-*s\n"
-                % (widths[0], taskid, widths[1], task._monitor_state, widths[2], task.name)
+                "%-*d %-*s %-*s %-*s\n"
+                % (
+                    widths[0],
+                    task._monitor_short_id,
+                    widths[1],
+                    task._monitor_state,
+                    widths[2],
+                    "yes" if is_shielded_task(task) else "",
+                    widths[3],
+                    task.name,
+                )
             )
 
     def command_task_tree(self, sout):
         root_task = next(iter(self._tasks.values()))
         while root_task.parent_nursery is not None:
             root_task = root_task.parent_nursery.parent_task
-        task_tree = render_task_tree(root_task)
+
+        def _format_task(task):
+            return "%s (id=%s, %s%s)" % (
+                task.name,
+                task._monitor_short_id,
+                task._monitor_state,
+                ", shielded" if is_shielded_task(task) else "",
+            )
+
+        task_tree = render_task_tree(root_task, _format_task)
         sout.write(task_tree)
 
     def command_where(self, sout, taskid):
-        task = self._tasks.get(taskid)
+        task = self.get_task_from_short_id(taskid)
         if task:
 
             def walk_coro_stack(coro):
@@ -310,19 +345,10 @@ io_statistics:
         # time (and task depending on it) in such object.
         sout.write("Not supported yet...")
 
-    # task = self._tasks.get(taskid)
-    # if task:
-    #     sout.write('Cancelling task %d\n' % taskid)
-
-    #     async def _cancel_task():
-    #         await taskid
-
-    #     self._portal.run(_cancel_task)
-
     def command_parents(self, sout, taskid):
-        task = self._tasks.get(taskid)
+        task = self.get_task_from_short_id(taskid)
         while task:
-            sout.write("%-6d %12s %s\n" % (id(task), "running", task.name))
+            sout.write("%-6d %12s %s\n" % (task._monitor_short_id, "running", task.name))
             task = task.parent_nursery._parent_task if task.parent_nursery else None
 
     def command_exit(self, sout):

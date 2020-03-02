@@ -1,39 +1,28 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
+from typing import Optional
 import trio
 import attr
 from structlog import get_logger
+from logging import DEBUG as LOG_LEVEL_DEBUG
+from pendulum import now as pendulum_now
+from async_generator import asynccontextmanager
 
 from parsec.event_bus import EventBus
+from parsec.logging import get_log_level
 from parsec.api.transport import TransportError, TransportClosedByPeer, Transport
-from parsec.api.protocole import (
+from parsec.api.protocol import (
     packb,
     unpackb,
-    ProtocoleError,
+    ProtocolError,
     MessageSerializationError,
     InvalidMessageError,
     ServerHandshake,
 )
-from parsec.backend.events import EventsComponent
-from parsec.backend.utils import check_anonymous_api_allowed
-from parsec.backend.blockstore import blockstore_factory
-from parsec.backend.drivers.memory import (
-    MemoryOrganizationComponent,
-    MemoryUserComponent,
-    MemoryVlobComponent,
-    MemoryMessageComponent,
-    MemoryPingComponent,
-    MemoryBlockComponent,
-)
-from parsec.backend.drivers.postgresql import (
-    PGHandler,
-    PGOrganizationComponent,
-    PGUserComponent,
-    PGVlobComponent,
-    PGMessageComponent,
-    PGPingComponent,
-    PGBlockComponent,
-)
+from parsec.backend.utils import check_anonymous_api_allowed, CancelledByNewRequest
+from parsec.backend.config import BackendConfig
+from parsec.backend.memory import components_factory as mocked_components_factory
+from parsec.backend.postgresql import components_factory as postgresql_components_factory
 from parsec.backend.user import UserNotFoundError
 from parsec.backend.organization import OrganizationNotFoundError
 
@@ -45,6 +34,7 @@ logger = get_logger()
 class LoggedClientContext:
     transport = attr.ib()
     organization_id = attr.ib()
+    is_admin = attr.ib()
     device_id = attr.ib()
     public_key = attr.ib()
     verify_key = attr.ib()
@@ -52,6 +42,7 @@ class LoggedClientContext:
     conn_id = attr.ib(init=False)
     logger = attr.ib(init=False)
     channels = attr.ib(factory=lambda: trio.open_memory_channel(100))
+    realms = attr.ib(factory=set)
 
     def __repr__(self):
         return (
@@ -121,34 +112,57 @@ def _filter_binary_fields(data):
     return {k: v if not isinstance(v, bytes) else b"[...]" for k, v in data.items()}
 
 
+@asynccontextmanager
+async def backend_app_factory(config: BackendConfig, event_bus: Optional[EventBus] = None):
+    event_bus = event_bus or EventBus()
+
+    if config.db_url == "MOCKED":
+        components_factory = mocked_components_factory
+    else:
+        components_factory = postgresql_components_factory
+
+    async with components_factory(config=config, event_bus=event_bus) as components:
+        yield BackendApp(
+            config=config,
+            event_bus=event_bus,
+            user=components["user"],
+            organization=components["organization"],
+            message=components["message"],
+            realm=components["realm"],
+            vlob=components["vlob"],
+            ping=components["ping"],
+            blockstore=components["blockstore"],
+            block=components["block"],
+            events=components["events"],
+        )
+
+
 class BackendApp:
-    def __init__(self, config, event_bus=None):
-        self.event_bus = event_bus or EventBus()
+    def __init__(
+        self,
+        config,
+        event_bus,
+        user,
+        organization,
+        message,
+        realm,
+        vlob,
+        ping,
+        blockstore,
+        block,
+        events,
+    ):
         self.config = config
-        self.nursery = None
-        self.dbh = None
-        self.events = EventsComponent(self.event_bus)
-
-        if self.config.db_url == "MOCKED":
-            self.user = MemoryUserComponent(self.event_bus)
-            self.organization = MemoryOrganizationComponent(self.user)
-            self.message = MemoryMessageComponent(self.event_bus)
-            self.vlob = MemoryVlobComponent(self.event_bus, self.user)
-            self.ping = MemoryPingComponent(self.event_bus)
-            self.blockstore = blockstore_factory(self.config.blockstore_config)
-            self.block = MemoryBlockComponent(self.blockstore, self.vlob)
-
-        else:
-            self.dbh = PGHandler(self.config.db_url, self.event_bus)
-            self.user = PGUserComponent(self.dbh, self.event_bus)
-            self.organization = PGOrganizationComponent(self.dbh, self.user)
-            self.message = PGMessageComponent(self.dbh)
-            self.vlob = PGVlobComponent(self.dbh)
-            self.ping = PGPingComponent(self.dbh)
-            self.blockstore = blockstore_factory(
-                self.config.blockstore_config, postgresql_dbh=self.dbh
-            )
-            self.block = PGBlockComponent(self.dbh, self.blockstore, self.vlob)
+        self.event_bus = event_bus
+        self.user = user
+        self.organization = organization
+        self.message = message
+        self.realm = realm
+        self.vlob = vlob
+        self.ping = ping
+        self.blockstore = blockstore
+        self.block = block
+        self.events = events
 
         self.logged_cmds = {
             "events_subscribe": self.events.api_events_subscribe,
@@ -156,28 +170,34 @@ class BackendApp:
             "ping": self.ping.api_ping,
             # Message
             "message_get": self.message.api_message_get,
-            "message_send": self.message.api_message_send,
             # User&Device
             "user_get": self.user.api_user_get,
             "user_find": self.user.api_user_find,
             "user_invite": self.user.api_user_invite,
             "user_cancel_invitation": self.user.api_user_cancel_invitation,
             "user_create": self.user.api_user_create,
+            "user_revoke": self.user.api_user_revoke,
             "device_invite": self.user.api_device_invite,
             "device_cancel_invitation": self.user.api_device_cancel_invitation,
             "device_create": self.user.api_device_create,
-            "device_revoke": self.user.api_device_revoke,
             # Block
             "block_create": self.block.api_block_create,
             "block_read": self.block.api_block_read,
             # Vlob
-            "vlob_group_check": self.vlob.api_vlob_group_check,
+            "vlob_poll_changes": self.vlob.api_vlob_poll_changes,
             "vlob_create": self.vlob.api_vlob_create,
             "vlob_read": self.vlob.api_vlob_read,
             "vlob_update": self.vlob.api_vlob_update,
-            "vlob_group_get_roles": self.vlob.api_vlob_group_get_roles,
-            "vlob_group_update_roles": self.vlob.api_vlob_group_update_roles,
-            "vlob_group_poll": self.vlob.api_vlob_group_poll,
+            "vlob_list_versions": self.vlob.api_vlob_list_versions,
+            "vlob_maintenance_get_reencryption_batch": self.vlob.api_vlob_maintenance_get_reencryption_batch,
+            "vlob_maintenance_save_reencryption_batch": self.vlob.api_vlob_maintenance_save_reencryption_batch,
+            # Realm
+            "realm_create": self.realm.api_realm_create,
+            "realm_status": self.realm.api_realm_status,
+            "realm_get_role_certificates": self.realm.api_realm_get_role_certificates,
+            "realm_update_roles": self.realm.api_realm_update_roles,
+            "realm_start_reencryption_maintenance": self.realm.api_realm_start_reencryption_maintenance,
+            "realm_finish_reencryption_maintenance": self.realm.api_realm_finish_reencryption_maintenance,
         }
         self.anonymous_cmds = {
             "user_claim": self.user.api_user_claim,
@@ -189,96 +209,151 @@ class BackendApp:
         }
         self.administration_cmds = {
             "organization_create": self.organization.api_organization_create,
+            "organization_stats": self.organization.api_organization_stats,
+            "organization_status": self.organization.api_organization_status,
+            "organization_update": self.organization.api_organization_update,
             "ping": self.ping.api_ping,
         }
         for fn in self.anonymous_cmds.values():
             check_anonymous_api_allowed(fn)
 
-    async def init(self, nursery):
-        self.nursery = nursery
-        if self.dbh:
-            await self.dbh.init(nursery)
-
-    async def teardown(self):
-        if self.dbh:
-            await self.dbh.teardown()
-
     async def _do_handshake(self, transport):
         context = None
+        error_infos = None
         try:
-            hs = ServerHandshake(self.config.handshake_challenge_size)
-            challenge_req = hs.build_challenge_req()
+            handshake = transport.handshake = ServerHandshake()
+            challenge_req = handshake.build_challenge_req()
             await transport.send(challenge_req)
             answer_req = await transport.recv()
 
-            hs.process_answer_req(answer_req)
+            handshake.process_answer_req(answer_req)
 
-            if hs.answer_type == "authenticated":
-                organization_id = hs.answer_data["organization_id"]
-                device_id = hs.answer_data["device_id"]
-                expected_rvk = hs.answer_data["rvk"]
+            if handshake.answer_type == "authenticated":
+                organization_id = handshake.answer_data["organization_id"]
+                device_id = handshake.answer_data["device_id"]
+                expected_rvk = handshake.answer_data["rvk"]
                 try:
                     organization = await self.organization.get(organization_id)
                     user, device = await self.user.get_user_with_device(organization_id, device_id)
 
-                except (OrganizationNotFoundError, UserNotFoundError, KeyError):
-                    result_req = hs.build_bad_identity_result_req()
+                except (OrganizationNotFoundError, UserNotFoundError, KeyError) as exc:
+                    result_req = handshake.build_bad_identity_result_req()
+                    error_infos = {
+                        "reason": str(exc),
+                        "handshake_type": "authenticated",
+                        "organization_id": organization_id,
+                        "device_id": device_id,
+                    }
 
                 else:
                     if organization.root_verify_key != expected_rvk:
-                        result_req = hs.build_rvk_mismatch_result_req()
+                        result_req = handshake.build_rvk_mismatch_result_req()
+                        error_infos = {
+                            "reason": "Bad root verify key",
+                            "handshake_type": "authenticated",
+                            "organization_id": organization_id,
+                            "device_id": device_id,
+                        }
 
-                    elif device.revoked_on:
-                        result_req = hs.build_revoked_device_result_req()
+                    elif (
+                        organization.expiration_date is not None
+                        and organization.expiration_date <= pendulum_now()
+                    ):
+                        result_req = handshake.build_organization_expired_result_req()
+                        error_infos = {
+                            "reason": "Expired organization",
+                            "handshake_type": "authenticated",
+                            "organization_id": organization_id,
+                            "device_id": device_id,
+                        }
+
+                    elif user.revoked_on and user.revoked_on <= pendulum_now():
+                        result_req = handshake.build_revoked_device_result_req()
+                        error_infos = {
+                            "reason": "Revoked device",
+                            "handshake_type": "authenticated",
+                            "organization_id": organization_id,
+                            "device_id": device_id,
+                        }
 
                     else:
                         context = LoggedClientContext(
                             transport,
                             organization_id,
+                            user.is_admin,
                             device_id,
                             user.public_key,
                             device.verify_key,
                         )
-                        result_req = hs.build_result_req(device.verify_key)
+                        result_req = handshake.build_result_req(device.verify_key)
 
-            elif hs.answer_type == "anonymous":
-                organization_id = hs.answer_data["organization_id"]
-                expected_rvk = hs.answer_data["rvk"]
+            elif handshake.answer_type == "anonymous":
+                organization_id = handshake.answer_data["organization_id"]
+                expected_rvk = handshake.answer_data["rvk"]
                 try:
                     organization = await self.organization.get(organization_id)
 
                 except OrganizationNotFoundError:
-                    result_req = hs.build_bad_identity_result_req()
+                    result_req = handshake.build_bad_identity_result_req()
+                    error_infos = {
+                        "reason": "Bad organization",
+                        "handshake_type": "anonymous",
+                        "organization_id": organization_id,
+                    }
 
                 else:
                     if expected_rvk and organization.root_verify_key != expected_rvk:
-                        result_req = hs.build_rvk_mismatch_result_req()
+                        result_req = handshake.build_rvk_mismatch_result_req()
+                        error_infos = {
+                            "reason": "Bad root verify key",
+                            "handshake_type": "anonymous",
+                            "organization_id": organization_id,
+                        }
+
+                    elif (
+                        organization.expiration_date is not None
+                        and organization.expiration_date <= pendulum_now()
+                    ):
+                        result_req = handshake.build_organization_expired_result_req()
+                        error_infos = {
+                            "reason": "Expired organization",
+                            "handshake_type": "anonymous",
+                            "organization_id": organization_id,
+                        }
 
                     else:
                         context = AnonymousClientContext(transport, organization_id)
-                        result_req = hs.build_result_req()
+                        result_req = handshake.build_result_req()
 
-            else:  # admin
-                context = AdministrationClientContext(transport)
-                if hs.answer_data["token"] == self.config.administration_token:
-                    result_req = hs.build_result_req()
+            elif handshake.answer_type == "administration":
+                if handshake.answer_data["token"] == self.config.administration_token:
+                    context = AdministrationClientContext(transport)
+                    result_req = handshake.build_result_req()
                 else:
-                    result_req = hs.build_bad_administration_token_result_req()
+                    result_req = handshake.build_bad_administration_token_result_req()
+                    error_infos = {"reason": "Bad token", "handshake_type": "administration"}
 
-        except ProtocoleError as exc:
-            result_req = hs.build_bad_format_result_req(str(exc))
+            else:
+                assert False
+
+        except ProtocolError as exc:
+            result_req = handshake.build_bad_protocol_result_req(str(exc))
+            error_infos = {"reason": str(exc), "handshake_type": handshake.answer_type}
 
         await transport.send(result_req)
-        return context
+        return context, error_infos
 
     async def handle_client(self, stream):
+        selected_logger = logger
+
         try:
             transport = await Transport.init_for_server(stream)
 
-        except TransportClosedByPeer:
+        except TransportClosedByPeer as exc:
+            selected_logger.info("Connection dropped: client has left", reason=str(exc))
             return
 
-        except TransportError:
+        except TransportError as exc:
             # A crash during transport setup could mean the client tried to
             # access us from a web browser (hence sending http request).
 
@@ -296,51 +371,66 @@ class BackendApp:
                 await stream.send_all(content + content_body)
                 await stream.aclose()
 
-            except TransportError:
+            except trio.BrokenResourceError:
                 # Stream is really dead, nothing else to do...
                 pass
 
+            selected_logger.info("Connection dropped: websocket error", reason=str(exc))
             return
 
-        transport.logger.info("Client joined")
+        selected_logger = transport.logger
 
         try:
-            transport.logger.debug("start handshake")
-            client_ctx = await self._do_handshake(transport)
+            client_ctx, error_infos = await self._do_handshake(transport)
             if not client_ctx:
                 # Invalid handshake
-                logger.debug("bad handshake")
+                await stream.aclose()
+                selected_logger.info("Connection dropped: bad handshake", **error_infos)
                 return
 
-            client_ctx.logger.debug("handshake done")
+            selected_logger = client_ctx.logger
+            selected_logger.info("Connection established")
 
             if hasattr(client_ctx, "event_bus_ctx"):
                 with self.event_bus.connection_context() as client_ctx.event_bus_ctx:
+                    with trio.CancelScope() as cancel_scope:
 
-                    await self._handle_client_loop(transport, client_ctx)
+                        def _on_revoked(event, organization_id, user_id):
+                            if (
+                                organization_id == client_ctx.organization_id
+                                and user_id == client_ctx.user_id
+                            ):
+                                cancel_scope.cancel()
+
+                        client_ctx.event_bus_ctx.connect("user.revoked", _on_revoked)
+                        await self._handle_client_loop(transport, client_ctx)
 
             else:
                 await self._handle_client_loop(transport, client_ctx)
 
-        except TransportClosedByPeer:
-            transport.logger.info("Client has left")
-            return
+            await transport.aclose()
 
-        except (TransportError, MessageSerializationError):
-            transport.logger.info("Close client connection due to invalid data")
+        except TransportClosedByPeer as exc:
+            selected_logger.info("Connection dropped: client has left", reason=str(exc))
+
+        except (TransportError, MessageSerializationError) as exc:
             rep = {"status": "invalid_msg_format", "reason": "Invalid message format"}
             try:
                 await transport.send(packb(rep))
             except TransportError:
                 pass
             await transport.aclose()
+            selected_logger.info("Connection dropped: invalid data", reason=str(exc))
 
     async def _handle_client_loop(self, transport, client_ctx):
-        transport.logger.info("Client handshake done")
+        raw_req = None
         while True:
-            raw_req = await transport.recv()
+            # raw_req can be already defined if we received a new request
+            # while processing a command
+            raw_req = raw_req or await transport.recv()
             req = unpackb(raw_req)
-            client_ctx.logger.debug("req", req=_filter_binary_fields(req))
+            if get_log_level() <= LOG_LEVEL_DEBUG:
+                client_ctx.logger.debug("Request", req=_filter_binary_fields(req))
             try:
                 cmd = req.get("cmd", "<missing>")
                 if not isinstance(cmd, str):
@@ -356,11 +446,9 @@ class BackendApp:
                     cmd_func = self.anonymous_cmds[cmd]
 
             except KeyError:
-                client_ctx.logger.info("Invalid request", bad_cmd=cmd)
                 rep = {"status": "unknown_command", "reason": "Unknown command"}
 
             else:
-                client_ctx.logger.info("Request", cmd=cmd)
                 try:
                     rep = await cmd_func(client_ctx, req)
 
@@ -371,9 +459,19 @@ class BackendApp:
                         "reason": "Invalid message.",
                     }
 
-                except ProtocoleError as exc:
+                except ProtocolError as exc:
                     rep = {"status": "bad_message", "reason": str(exc)}
 
-            client_ctx.logger.debug("rep", rep=_filter_binary_fields(rep))
+                except CancelledByNewRequest as exc:
+                    # Long command handling such as message_get can be cancelled
+                    # when the peer send a new request
+                    raw_req = exc.new_raw_req
+                    continue
+
+            if get_log_level() <= LOG_LEVEL_DEBUG:
+                client_ctx.logger.debug("Response", rep=_filter_binary_fields(req))
+            else:
+                client_ctx.logger.info("Request", cmd=cmd, status=rep["status"])
             raw_rep = packb(rep)
             await transport.send(raw_rep)
+            raw_req = None

@@ -15,16 +15,11 @@ from marshmallow.fields import (
     Boolean,
     Field,
 )
-import re
 
-from parsec.types import (
-    DeviceID as _DeviceID,
-    UserID as _UserID,
-    DeviceName as _DeviceName,
-    BackendOrganizationAddr as _BackendOrganizationAddr,
-    OrganizationID as _OrganizationID,
-)
-from parsec.crypto_types import (
+from parsec.types import FrozenDict as _FrozenDict
+from parsec.crypto import (
+    SecretKey as _SecretKey,
+    HashDigest as _HashDigest,
     SigningKey as _SigningKey,
     VerifyKey as _VerifyKey,
     PrivateKey as _PrivateKey,
@@ -33,6 +28,10 @@ from parsec.crypto_types import (
 
 
 __all__ = (
+    "enum_field_factory",
+    "bytes_based_field_factory",
+    "str_based_field_factory",
+    "uuid_based_field_factory",
     "Int",
     "String",
     "List",
@@ -50,12 +49,37 @@ __all__ = (
     "SigningKey",
     "PublicKey",
     "PrivateKey",
-    "SymetricKey",
-    "DeviceID",
-    "UserID",
-    "DeviceName",
-    "SemVer",
+    "SecretKey",
+    "HashDigest",
 )
+
+
+def enum_field_factory(enum):
+    def _serialize(self, value, attr, obj):
+        if value is None:
+            return None
+
+        if not isinstance(value, enum):
+            raise ValidationError(f"Not a {enum.__name__}")
+
+        return value.value
+
+    def _deserialize(self, value, attr, data):
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise ValidationError("Not string")
+
+        for choice in enum:
+            if choice.value == value:
+                return choice
+        else:
+            raise ValidationError(f"Invalid role `{value}`")
+
+    return type(
+        f"{enum.__name__}Field", (Field,), {"_serialize": _serialize, "_deserialize": _deserialize}
+    )
 
 
 def bytes_based_field_factory(value_type):
@@ -97,6 +121,26 @@ def str_based_field_factory(value_type):
             return None
 
         return str(value)
+
+    return type(
+        f"{value_type.__name__}Field",
+        (Field,),
+        {"_deserialize": _deserialize, "_serialize": _serialize},
+    )
+
+
+def uuid_based_field_factory(value_type):
+    def _deserialize(self, value, attr, data):
+        try:
+            return value_type(str(value))
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+
+    def _serialize(self, value, attr, data):
+        if value is None:
+            return None
+
+        return value
 
     return type(
         f"{value_type.__name__}Field",
@@ -196,6 +240,32 @@ class Map(Field):
         return ret
 
 
+class FrozenMap(Map):
+    def _deserialize(self, value, attr, obj):
+        return _FrozenDict(super()._deserialize(value, attr, obj))
+
+
+class FrozenList(List):
+    def _deserialize(self, value, attr, obj):
+        return tuple(super()._deserialize(value, attr, obj))
+
+
+class Tuple(Field):
+    default_error_messages = {"invalid": "Not a valid tuple type."}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(**kwargs)
+        self.args = args
+
+    def _deserialize(self, value, attr, obj):
+        if not isinstance(value, (list, tuple)) or len(self.args) != len(value):
+            self.fail("invalid")
+        return tuple(self.args[i].deserialize(v, attr, obj) for i, v in enumerate(value))
+
+    def _serialize(self, value, attr, obj):
+        return tuple(self.args[i]._serialize(v, attr, obj) for i, v in enumerate(value))
+
+
 class SigningKey(Field):
     def _serialize(self, value, attr, obj):
         if value is None:
@@ -268,23 +338,6 @@ class PublicKey(Field):
             raise ValidationError("Invalid verify key.")
 
 
-class SemVer(Field):
-    default_error_messages = {"no_string": "Not a string.", "regex_failed": "String not a SemVer"}
-
-    def _serialize(self, value, attr, obj):
-        if not isinstance(value, str):
-            self.fail("no_string")
-        if not re.match("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)", value):
-            self.fail("regex_failed")
-        return value
-
-    _deserialize = _serialize
-
-
-SymetricKey = bytes_based_field_factory(bytes)
+SecretKey = bytes_based_field_factory(_SecretKey)
+HashDigest = bytes_based_field_factory(_HashDigest)
 Bytes = bytes_based_field_factory(bytes)
-DeviceID = str_based_field_factory(_DeviceID)
-UserID = str_based_field_factory(_UserID)
-OrganizationID = str_based_field_factory(_OrganizationID)
-DeviceName = str_based_field_factory(_DeviceName)
-BackendOrganizationAddr = str_based_field_factory(_BackendOrganizationAddr)

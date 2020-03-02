@@ -1,20 +1,14 @@
 #!/usr/bin/env python
+# Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
+
 # -*- coding: utf-8 -*-
 
-from setuptools import find_packages, distutils, Command
+from setuptools import setup, find_packages, distutils, Command
 from setuptools.command.build_py import build_py
-
-try:
-    from cx_Freeze import setup, Executable
-except ImportError:
-
-    def Executable(x, **kw):
-        return x
-
-    from setuptools import setup
 
 import itertools
 import glob
+import os
 
 
 # Awesome hack to load `__version__`
@@ -46,16 +40,16 @@ def fix_pyqt_import():
         else:
             continue
 
-        try:
-            path = glob.glob(path_glob)[0]
-        except IndexError:
-            raise RuntimeError("Cannot found module `%s` in .eggs" % module_name)
+        for path in glob.glob(path_glob):
 
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        if not spec:
-            raise RuntimeError("Cannot load module `%s` from path `%s`" % (module_name, path))
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
+            spec = importlib.util.spec_from_file_location(module_name, path)
+            if spec:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                break
+
+        else:
+            raise RuntimeError("Cannot found module `%s` in .eggs" % module_name)
 
 
 class GeneratePyQtResourcesBundle(Command):
@@ -80,6 +74,32 @@ class GeneratePyQtResourcesBundle(Command):
             )
         except ImportError:
             print("PyQt5 not installed, skipping `parsec.core.gui._resources_rc` generation.")
+
+
+class GenerateChangelog(Command):
+    description = "Convert HISTORY.rst to HTML"
+
+    user_options = []
+
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+    def run(self):
+        import docutils.core
+
+        destination_folder = "parsec/core/gui/rc/generated_misc"
+        self.announce(
+            f"Converting HISTORY.rst to {destination_folder}/history.html", level=distutils.log.INFO
+        )
+        os.makedirs(destination_folder, exist_ok=True)
+        docutils.core.publish_file(
+            source_path="HISTORY.rst",
+            destination_path=f"{destination_folder}/history.html",
+            writer_name="html",
+        )
 
 
 class GeneratePyQtForms(Command):
@@ -177,13 +197,16 @@ class ExtractTranslations(Command):
         CommandLineInterface().run(args)
         languages = ["fr", "en"]
         for lang in languages:
+            po_file = tr_dir / f"parsec_{lang}.po"
+            if not po_file.is_file():
+                po_file.touch()
             args = [
                 "_",
                 "update",
                 "-i",
                 str(tr_dir / "translation.pot"),
                 "-o",
-                str(tr_dir / f"parsec_{lang}.po"),
+                str(po_file),
                 "-l",
                 lang,
             ]
@@ -228,6 +251,7 @@ class build_py_with_pyqt(build_py):
     def run(self):
         self.run_command("generate_pyqt_forms")
         self.run_command("compile_translations")
+        self.run_command("generate_changelog")
         self.run_command("generate_pyqt_resources_bundle")
         return super().run()
 
@@ -238,60 +262,34 @@ class build_py_with_pyqt_resource_bundle_generation(build_py):
         return super().run()
 
 
-def _extract_libs_cffi_backend():
-    try:
-        import nacl
-    except ImportError:
-        return []
-
-    import pathlib
-
-    cffi_backend_dir = pathlib.Path(nacl.__file__).parent / "../.libs_cffi_backend"
-    return [(lib.as_posix(), lib.name) for lib in cffi_backend_dir.glob("*")]
-
-
-build_exe_options = {
-    "packages": [
-        "parsec.core.gui.ui",
-        "idna",
-        "sentry_sdk.integrations",
-        "trio._core",
-        "nacl._sodium",
-        "html.parser",
-        "pkg_resources._vendor",
-        "swiftclient",
-        "setuptools.msvc",
-        "unittest.mock",
-    ],
-    # nacl store it cffi shared lib in a very strange place...
-    "include_files": _extract_libs_cffi_backend(),
-}
-
-
 with open("README.rst") as readme_file:
     readme = readme_file.read()
 
 with open("HISTORY.rst") as history_file:
     history = history_file.read()
 
+
 requirements = [
-    "attrs==18.2.0",
+    "attrs==19.2.0",
     "click==7.0",
     "msgpack==0.6.0",
-    "wsproto==0.12.0",
+    "wsproto==0.15.0",
     # Can use marshmallow or the toasted flavour as you like ;-)
     # "marshmallow==2.14.0",
     "toastedmarshmallow==0.2.6",
     "pendulum==1.3.1",
     "PyNaCl==1.2.1",
-    "trio==0.11.0",
+    "trio==0.13.0",
     "python-interface==1.4.0",
     "async_generator>=1.9",
     'contextvars==2.1;python_version<"3.7"',
-    "sentry-sdk==0.7.7",
-    "structlog==18.2.0",
+    "sentry-sdk==0.13.5",
+    "structlog==19.2.0",
     "importlib_resources==1.0.2",
     "colorama==0.4.0",  # structlog colored output
+    "PyPika==0.29.0",
+    "async_exit_stack==1.0.1",
+    "outcome==1.0.0",
 ]
 
 
@@ -302,26 +300,33 @@ test_requirements = [
     "pytest-trio==0.5.2",
     "pytest-qt==3.2.2",
     "pluggy==0.9.0",  # see https://github.com/pytest-dev/pytest/issues/3753
-    "tox",
-    "wheel",
-    "Sphinx",
-    "flake8==3.7.7",
-    "hypothesis==4.5.5",
-    "hypothesis-trio==0.3.0",
-    "black==19.3b0",  # Pin black to avoid flaky style check
+    "hypothesis==5.3.0",
+    "hypothesis-trio==0.5.0",
+    "trustme==0.5.2",
+    # Winfsptest requirements
+    # We can't use `winfspy[test]` because of some pip limitations
+    # - see pip issues #7096/#6239/#4391/#988
+    # Looking forward to the new pip dependency resolver!
+    'pywin32==227;platform_system=="Windows"',
+    # Documentation generation requirements
+    "sphinx==2.4.3",
+    "sphinx-intl==2.0.0",
+    "sphinx-rtd-theme==0.4.3",
 ]
 
 
-PYQT_DEP = "PyQt5==5.11.2"
-BABEL_DEP = ("Babel==2.6.0",)
+PYQT_DEP = "PyQt5==5.13.1"
+BABEL_DEP = "Babel==2.6.0"
+WHEEL_DEP = "wheel==0.34.2"
+DOCUTILS_DEP = "docutils==0.14"
 extra_requirements = {
-    "pkcs11": ["python-pkcs11==0.5.0", "pycrypto==2.6.1"],
     "core": [
         PYQT_DEP,
         BABEL_DEP,
         'fusepy==3.0.1;platform_system=="Linux"',
-        'winfspy==0.4.2;platform_system=="Windows"',
+        'winfspy==0.7.3;platform_system=="Windows"',
         "zxcvbn==4.4.27",
+        "psutil==5.6.3",
     ],
     "backend": [
         # PostgreSQL
@@ -333,7 +338,6 @@ extra_requirements = {
         # Swift
         "python-swiftclient==3.5.0",
         "pbr==4.0.2",
-        "futures==3.1.1",
     ],
     "dev": test_requirements,
 }
@@ -348,13 +352,14 @@ setup(
     author="Scille SAS",
     author_email="contact@scille.fr",
     url="https://github.com/Scille/parsec-cloud",
-    packages=find_packages(),
+    packages=find_packages(include=["parsec", "parsec.*"]),
     package_dir={"parsec": "parsec"},
-    setup_requires=[PYQT_DEP, BABEL_DEP],  # To generate resources bundle
+    setup_requires=[WHEEL_DEP, PYQT_DEP, BABEL_DEP, DOCUTILS_DEP],  # To generate resources bundle
     install_requires=requirements,
     extras_require=extra_requirements,
     cmdclass={
         "generate_pyqt_resources_bundle": GeneratePyQtResourcesBundle,
+        "generate_changelog": GenerateChangelog,
         "generate_pyqt_forms": GeneratePyQtForms,
         "extract_translations": ExtractTranslations,
         "compile_translations": CompileTranslations,
@@ -364,7 +369,7 @@ setup(
     # As you may know, setuptools is really broken, so we have to roll our
     # globing ourself to include non-python files...
     package_data={
-        "parsec.backend.drivers.postgresql": "*.sql",
+        "parsec.backend.drivers.postgresql": glob.glob("parsec/backend/**/*.sql"),
         "parsec.core.gui": [
             x[len("parsec/core/gui/") :]
             for x in itertools.chain(
@@ -381,8 +386,6 @@ setup(
         "console_scripts": ["parsec = parsec.cli:cli"],
         "babel.extractors": ["extract_qt = misc.babel_qt_extractor.extract_qt"],
     },
-    options={"build_exe": build_exe_options},
-    executables=[Executable("parsec/cli.py", targetName="parsec")],
     license="AGPLv3",
     zip_safe=False,
     keywords="parsec",
@@ -398,4 +401,5 @@ setup(
     ],
     test_suite="tests",
     tests_require=test_requirements,
+    long_description_content_type="text/x-rst",
 )

@@ -1,15 +1,16 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
 import trio
+import unicodedata
 from zlib import adler32
-from pathlib import PurePath
+from pathlib import Path
 from structlog import get_logger
 from itertools import count
 from winfspy import FileSystem, enable_debug_log
 from winfspy.plumbing.winstuff import filetime_now
 
 from parsec.core.mountpoint.exceptions import MountpointDriverCrash
-from parsec.core.mountpoint.winfsp_operations import WinFSPOperations
+from parsec.core.mountpoint.winfsp_operations import WinFSPOperations, winify_entry_name
 from parsec.core.mountpoint.thread_fs_access import ThreadFSAccess
 
 
@@ -19,10 +20,47 @@ __all__ = ("winfsp_mountpoint_runner",)
 logger = get_logger()
 
 
-async def _bootstrap_mountpoint(base_mountpoint_path: PurePath, workspace_name) -> PurePath:
+async def cleanup_broken_links(path: trio.Path) -> None:
+    def target():
+        for child in sync_path.iterdir():
+            try:
+                if not child.exists():
+                    child.unlink()
+            except OSError:
+                pass
+
+    # This should be migrated to trio.Path API once issue #1308 is fixed.
+    sync_path = Path(str(path))
+    await trio.to_thread.run_sync(target)
+
+
+async def is_path_available(path: trio.Path) -> bool:
+    # The path already exists
+    if await path.exists():
+        return False
+
+    # The path is a broken link
+    try:
+        await path.lstat()
+        return True
+    except OSError:
+        pass
+
+    # The path is available
+    return True
+
+
+async def _bootstrap_mountpoint(base_mountpoint_path: Path, workspace_name) -> Path:
     # Mountpoint can be a drive letter, in such case nothing to do
     if str(base_mountpoint_path) == base_mountpoint_path.drive:
         return
+
+    # On Windows, only mountpoint's parent must exists
+    trio_base_mountpoint_path = trio.Path(base_mountpoint_path)
+    await trio_base_mountpoint_path.mkdir(exist_ok=True, parents=True)
+
+    # Clean up broken links in base directory
+    await cleanup_broken_links(trio_base_mountpoint_path)
 
     # Find a suitable path where to mount the workspace. The check we are doing
     # here are not atomic (and the mount operation is not itself atomic anyway),
@@ -33,14 +71,15 @@ async def _bootstrap_mountpoint(base_mountpoint_path: PurePath, workspace_name) 
             dirname = workspace_name
         else:
             dirname = f"{workspace_name} ({tentative})"
+
         mountpoint_path = base_mountpoint_path / dirname
+        trio_mountpoint_path = trio_base_mountpoint_path / dirname
 
         try:
-            # On Windows, only mountpoint's parent must exists
-            trio_mountpoint_path = trio.Path(mountpoint_path)
-            await trio_mountpoint_path.parent.mkdir(exist_ok=True, parents=True)
-            if await trio_mountpoint_path.exists():
+            # Ignore if the path is not available
+            if not await is_path_available(trio_mountpoint_path):
                 continue
+
             return mountpoint_path
 
         except OSError:
@@ -56,7 +95,7 @@ def _generate_volume_serial_number(device, workspace_id):
 
 async def winfsp_mountpoint_runner(
     workspace_fs,
-    base_mountpoint_path: PurePath,
+    base_mountpoint_path: Path,
     config: dict,
     event_bus,
     *,
@@ -67,16 +106,22 @@ async def winfsp_mountpoint_runner(
         MountpointDriverCrash
     """
     device = workspace_fs.device
-    workspace_name = workspace_fs.workspace_name
-    portal = trio.BlockingTrioPortal()
-    fs_access = ThreadFSAccess(portal, workspace_fs)
+    workspace_name = winify_entry_name(workspace_fs.get_workspace_name())
+    trio_token = trio.hazmat.current_trio_token()
+    fs_access = ThreadFSAccess(trio_token, workspace_fs)
 
     mountpoint_path = await _bootstrap_mountpoint(base_mountpoint_path, workspace_name)
 
     if config.get("debug", False):
         enable_debug_log()
 
-    volume_label = f"{device.user_id}-{workspace_name}"[:31]
+    # Volume label is limited to 32 WCHAR characters, so force the label to
+    # ascii to easily enforce the size.
+    volume_label = (
+        unicodedata.normalize("NFKD", f"{device.user_id}-{workspace_name}")
+        .encode("ascii", "ignore")[:32]
+        .decode("ascii")
+    )
     volume_serial_number = _generate_volume_serial_number(device, workspace_fs.workspace_id)
     operations = WinFSPOperations(event_bus, volume_label, fs_access)
     # See https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-getvolumeinformationa  # noqa
@@ -97,17 +142,33 @@ async def winfsp_mountpoint_runner(
         named_streams=0,
         read_only_volume=0,
         post_cleanup_when_modified_only=1,
-        pass_query_directory_file_name=0,  # TODO: implement `operations.get_dir_info_by_name`
         device_control=0,
         um_file_context_is_user_context2=1,
-        file_system_name="parsec-mnt",
+        file_system_name="Parsec",
         prefix="",
+        # The minimum value for IRP timeout is 1 minute (default is 5)
+        irp_timeout=60000,
+        # Work around the avast/winfsp incompatibility
+        reject_irp_prior_to_transact0=True,
         # security_timeout_valid=1,
         # security_timeout=10000,
     )
     try:
         event_bus.send("mountpoint.starting", mountpoint=mountpoint_path)
-        fs.start()
+
+        # Run fs start in a thread, as a cancellable operation
+        # This is because fs.start() might get stuck for while in case of an IRP timeout
+        await trio.to_thread.run_sync(fs.start, cancellable=True)
+
+        # Because of reject_irp_prior_to_transact0, the mountpoint isn't ready yet
+        # We have to add a bit of delay here, the tests would fail otherwise
+        # 10 ms is more than enough, although a strict process would be nicer
+        # Still, this is only temporary as avast is working on a fix at the moment
+        # Another way to address this problem would be to migrate to python 3.8,
+        # then use `os.stat` to differentiate between a started and a non-started
+        # file syste.
+        await trio.sleep(0.01)
+
         event_bus.send("mountpoint.started", mountpoint=mountpoint_path)
         task_status.started(mountpoint_path)
 
@@ -117,5 +178,8 @@ async def winfsp_mountpoint_runner(
         raise MountpointDriverCrash(f"WinFSP has crashed on {mountpoint_path}: {exc}") from exc
 
     finally:
-        fs.stop()
+        # Must run in thread given this call will wait for any winfsp operation
+        # to finish so blocking the trio loop can produce a dead lock...
+        with trio.CancelScope(shield=True):
+            await trio.to_thread.run_sync(fs.stop)
         event_bus.send("mountpoint.stopped", mountpoint=mountpoint_path)

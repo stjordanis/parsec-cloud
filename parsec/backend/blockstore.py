@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from parsec.types import OrganizationID
+from parsec.api.protocol import OrganizationID
 from parsec.backend.config import BaseBlockStoreConfig
 
 
@@ -28,12 +28,12 @@ def blockstore_factory(
     config: BaseBlockStoreConfig, postgresql_dbh=None
 ) -> BaseBlockStoreComponent:
     if config.type == "MOCKED":
-        from parsec.backend.drivers.memory import MemoryBlockStoreComponent
+        from parsec.backend.memory import MemoryBlockStoreComponent
 
         return MemoryBlockStoreComponent()
 
     elif config.type == "POSTGRESQL":
-        from parsec.backend.drivers.postgresql import PGBlockStoreComponent
+        from parsec.backend.postgresql import PGBlockStoreComponent
 
         if not postgresql_dbh:
             raise ValueError("PostgreSQL block store is not available")
@@ -44,7 +44,11 @@ def blockstore_factory(
             from parsec.backend.s3_blockstore import S3BlockStoreComponent
 
             return S3BlockStoreComponent(
-                config.s3_region, config.s3_bucket, config.s3_key, config.s3_secret
+                config.s3_region,
+                config.s3_bucket,
+                config.s3_key,
+                config.s3_secret,
+                config.s3_endpoint_url,
             )
         except ImportError as exc:
             raise ValueError("S3 block store is not available") from exc
@@ -79,6 +83,9 @@ def blockstore_factory(
 
     elif config.type == "RAID5":
         from parsec.backend.raid5_blockstore import RAID5BlockStoreComponent
+
+        if len(config.blockstores) < 3:
+            raise ValueError(f"RAID5 block store needs at least 3 nodes")
 
         blocks = [blockstore_factory(subconf, postgresql_dbh) for subconf in config.blockstores]
 

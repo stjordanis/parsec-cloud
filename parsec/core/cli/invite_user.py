@@ -1,24 +1,34 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-import trio
 import click
 
+from parsec.utils import trio_run
 from parsec.cli_utils import spinner, cli_exception_handler
-from parsec.types import UserID
+from parsec.api.protocol import UserID
+from parsec.core.types import BackendOrganizationClaimUserAddr
 from parsec.core.invite_claim import generate_invitation_token, invite_and_create_user
 from parsec.core.cli.utils import core_config_and_device_options
 
 
 async def _invite_user(config, device, invited_user_id, admin):
+    action_addr = BackendOrganizationClaimUserAddr.build(
+        organization_addr=device.organization_addr, user_id=invited_user_id
+    )
     token = generate_invitation_token()
 
-    organization_addr_display = click.style(device.organization_addr, fg="yellow")
+    action_addr_display = click.style(action_addr.to_url(), fg="yellow")
     token_display = click.style(token, fg="yellow")
-    click.echo(f"Backend url: {organization_addr_display}")
-    click.echo(f"Invitation token: {token_display}")
+    click.echo(f"url: {action_addr_display}")
+    click.echo(f"token: {token_display}")
 
     async with spinner("Waiting for invitation reply"):
-        invite_device_id = await invite_and_create_user(device, invited_user_id, token, admin)
+        invite_device_id = await invite_and_create_user(
+            device=device,
+            user_id=invited_user_id,
+            token=token,
+            is_admin=admin,
+            keepalive=config.backend_connection_keepalive,
+        )
 
     display_device = click.style(invite_device_id, fg="yellow")
     click.echo(f"Device {display_device} has been created")
@@ -30,4 +40,4 @@ async def _invite_user(config, device, invited_user_id, admin):
 @click.argument("invited_user_id", type=UserID, required=True)
 def invite_user(config, device, admin, invited_user_id, **kwargs):
     with cli_exception_handler(config.debug):
-        trio.run(_invite_user, config, device, invited_user_id, admin)
+        trio_run(_invite_user, config, device, invited_user_id, admin)

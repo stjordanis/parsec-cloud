@@ -9,17 +9,21 @@ from botocore.exceptions import (
 from uuid import UUID
 from functools import partial
 
-from parsec.types import OrganizationID
+from parsec.api.protocol import OrganizationID
 from parsec.backend.blockstore import BaseBlockStoreComponent
 from parsec.backend.block import BlockAlreadyExistsError, BlockNotFoundError, BlockTimeoutError
 
 
 class S3BlockStoreComponent(BaseBlockStoreComponent):
-    def __init__(self, s3_region, s3_bucket, s3_key, s3_secret):
+    def __init__(self, s3_region, s3_bucket, s3_key, s3_secret, s3_endpoint_url=None):
         self._s3 = None
         self._s3_bucket = None
         self._s3 = boto3.client(
-            "s3", region_name=s3_region, aws_access_key_id=s3_key, aws_secret_access_key=s3_secret
+            "s3",
+            region_name=s3_region,
+            aws_access_key_id=s3_key,
+            aws_secret_access_key=s3_secret,
+            endpoint_url=s3_endpoint_url,
         )
         self._s3_bucket = s3_bucket
         self._s3.head_bucket(Bucket=s3_bucket)
@@ -44,13 +48,13 @@ class S3BlockStoreComponent(BaseBlockStoreComponent):
     async def create(self, organization_id: OrganizationID, id: UUID, block: bytes) -> None:
         slug = f"{organization_id}/{id}"
         try:
-            await trio.run_sync_in_worker_thread(
+            await trio.to_thread.run_sync(
                 partial(self._s3.head_object, Bucket=self._s3_bucket, Key=slug)
             )
         except S3ClientError as exc:
             if exc.response["Error"]["Code"] == "404":
                 try:
-                    await trio.run_sync_in_worker_thread(
+                    await trio.to_thread.run_sync(
                         partial(self._s3.put_object, Bucket=self._s3_bucket, Key=slug, Body=block)
                     )
                 except (S3ClientError, S3EndpointConnectionError) as exc:

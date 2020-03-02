@@ -10,6 +10,8 @@ from PyQt5.QtGui import QIcon, QPixmap, QPainter
 
 NAME_DATA_INDEX = Qt.UserRole
 TYPE_DATA_INDEX = Qt.UserRole + 1
+UUID_DATA_INDEX = Qt.UserRole + 2
+COPY_STATUS_DATA_INDEX = Qt.UserRole + 3
 
 
 class FileType(IntEnum):
@@ -17,6 +19,7 @@ class FileType(IntEnum):
     ParentFolder = 2
     Folder = 3
     File = 4
+    Inconsistency = 5
 
 
 class CustomTableItem(QTableWidgetItem):
@@ -109,13 +112,24 @@ class FileTableItem(IconTableItem):
 
     def __init__(self, is_synced, file_name, *args, **kwargs):
         ext = pathlib.Path(file_name).suffix
-        icon = self.EXTENSIONS.get(ext, "file_unknown")
-        super().__init__(is_synced, ":/icons/images/icons/{}.png".format(icon), "", *args, **kwargs)
+        icon = self.EXTENSIONS.get(ext.lower(), "file_unknown")
+        super().__init__(
+            is_synced, ":/icons/images/icons/file_icons/{}.png".format(icon), "", *args, **kwargs
+        )
         self.setData(TYPE_DATA_INDEX, FileType.File)
 
 
 class FolderTableItem(IconTableItem):
     def __init__(self, is_synced, *args, **kwargs):
-        super().__init__(is_synced, ":/icons/images/icons/folder.png", "", *args, **kwargs)
+        super().__init__(
+            is_synced, ":/icons/images/icons/file_icons/folder.png", "", *args, **kwargs
+        )
         self.setData(NAME_DATA_INDEX, 0)
         self.setData(TYPE_DATA_INDEX, FileType.Folder)
+
+
+class InconsistencyTableItem(IconTableItem):
+    def __init__(self, is_synced, *args, **kwargs):
+        super().__init__(is_synced, ":/icons/images/icons/warning.png", "", *args, **kwargs)
+        self.setData(NAME_DATA_INDEX, 0)
+        self.setData(TYPE_DATA_INDEX, FileType.Inconsistency)

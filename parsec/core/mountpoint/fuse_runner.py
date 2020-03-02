@@ -1,5 +1,6 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
+import sys
 import trio
 import errno
 import ctypes
@@ -35,7 +36,8 @@ def _reset_signals(signals=None):
         yield
     finally:
         for sig, handler in saved.items():
-            ctypes.pythonapi.PyOS_setsig(sig, handler)
+            if ctypes.pythonapi.PyOS_getsig(sig) != handler:
+                ctypes.pythonapi.PyOS_setsig(sig, handler)
 
 
 async def _bootstrap_mountpoint(base_mountpoint_path: PurePath, workspace_fs) -> PurePath:
@@ -43,7 +45,7 @@ async def _bootstrap_mountpoint(base_mountpoint_path: PurePath, workspace_fs) ->
     # here are not atomic (and the mount operation is not itself atomic anyway),
     # hence there is still edgecases where the mount can crash due to concurrent
     # changes on the mountpoint path
-    workspace_name = workspace_fs.workspace_name
+    workspace_name = workspace_fs.get_workspace_name()
     for tentative in count(1):
         if tentative == 1:
             dirname = workspace_name
@@ -75,7 +77,8 @@ async def _bootstrap_mountpoint(base_mountpoint_path: PurePath, workspace_fs) ->
 
 async def _teardown_mountpoint(mountpoint_path):
     try:
-        await trio.Path(mountpoint_path).rmdir()
+        with trio.CancelScope(shield=True):
+            await trio.Path(mountpoint_path).rmdir()
     except OSError:
         pass
 
@@ -94,8 +97,8 @@ async def fuse_mountpoint_runner(
     """
     fuse_thread_started = threading.Event()
     fuse_thread_stopped = threading.Event()
-    portal = trio.BlockingTrioPortal()
-    fs_access = ThreadFSAccess(portal, workspace_fs)
+    trio_token = trio.hazmat.current_trio_token()
+    fs_access = ThreadFSAccess(trio_token, workspace_fs)
     fuse_operations = FuseOperations(event_bus, fs_access)
 
     mountpoint_path, initial_st_dev = await _bootstrap_mountpoint(
@@ -105,7 +108,15 @@ async def fuse_mountpoint_runner(
     try:
         event_bus.send("mountpoint.starting", mountpoint=mountpoint_path)
 
-        async with trio.open_nursery() as nursery:
+        async with trio.open_service_nursery() as nursery:
+
+            # Let fusepy decode the paths using the current file system encoding
+            # Note that this does not prevent the user from using a certain encoding
+            # in the context of the parsec app and another encoding in the context of
+            # an application accessing the mountpoint. In this case, an encoding error
+            # might be raised while fuspy tries to decode the path. If that happends,
+            # fuspy will log the error and simply return EINVAL, which is acceptable.
+            encoding = sys.getfilesystemencoding()
 
             def _run_fuse_thread():
                 logger.info("Starting fuse thread...", mountpoint=mountpoint_path)
@@ -116,6 +127,7 @@ async def fuse_mountpoint_runner(
                         str(mountpoint_path.absolute()),
                         foreground=True,
                         auto_unmount=True,
+                        encoding=encoding,
                         **config,
                     )
 
@@ -139,7 +151,7 @@ async def fuse_mountpoint_runner(
             # restore the signals to their previous state once the fuse instance is started.
             with _reset_signals():
                 nursery.start_soon(
-                    lambda: trio.run_sync_in_worker_thread(_run_fuse_thread, cancellable=True)
+                    lambda: trio.to_thread.run_sync(_run_fuse_thread, cancellable=True)
                 )
                 await _wait_for_fuse_ready(mountpoint_path, fuse_thread_started, initial_st_dev)
 
@@ -159,11 +171,14 @@ async def _wait_for_fuse_ready(mountpoint_path, fuse_thread_started, initial_st_
     while True:
         await trio.sleep(0.01)
         try:
-            if (await trio_mountpoint_path.stat()).st_dev != initial_st_dev:
-                break
-
+            stat = await trio_mountpoint_path.stat()
         except FileNotFoundError:
-            pass
+            continue
+        # Looks like a revoked workspace has been mounted
+        except PermissionError:
+            break
+        if stat.st_dev != initial_st_dev:
+            break
 
 
 async def _stop_fuse_thread(mountpoint_path, fuse_operations, fuse_thread_stopped):
@@ -180,5 +195,5 @@ async def _stop_fuse_thread(mountpoint_path, fuse_operations, fuse_thread_stoppe
             await trio.Path(mountpoint_path / "__shutdown_fuse__").exists()
         except OSError:
             pass
-        await trio.run_sync_in_worker_thread(fuse_thread_stopped.wait)
+        await trio.to_thread.run_sync(fuse_thread_stopped.wait)
         logger.info("Fuse thread stopped", mountpoint=mountpoint_path)

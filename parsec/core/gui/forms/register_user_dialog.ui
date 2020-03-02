@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
+    <width>412</width>
     <height>384</height>
    </rect>
   </property>
@@ -23,83 +23,12 @@
    </size>
   </property>
   <property name="windowTitle">
-   <string>Register new user</string>
+   <string>TITLE_REGISTER_NEW_USER</string>
   </property>
   <property name="styleSheet">
    <string notr="true">QDialog#RegisterUserDialog
 {
 background-color: rgb(255, 255, 255);
-}
-
-QLineEdit
-{
-border: 1px solid rgb(30, 78, 162);
-padding-left: 10px;
-}
-
-QLineEdit[readOnly=&quot;true&quot;]
-{
-background-color: rgb(230, 230, 230);
-}
-
-QLineEdit:!enabled
-{
-border: 1px solid rgb(180, 180, 180);
-}
-
-QPushButton
-{
-background-color: rgb(45, 144, 209);
-border: 1px solid rgb(11, 56, 166);
-color: rgb(255, 255, 255);
-padding-left: 10px;
-padding-right: 10px;
-}
-
-QPushButton:disabled
-{
-border: 1px solid rgb(65, 75, 106);
-background-color: rgb(112, 122, 153);
-color: rgb(255, 255, 255);
-}
-
-QToolButton
-{
-border: none;
-}
-
-QCheckBox::indicator
-{
-width: 15px;
-height: 15px;
-background-color: rgb(255, 255, 255);
-border: 2px solid rgb(30, 78, 162);
-color: black;
-}
-
-QCheckBox::indicator:checked
-{
-image: url(:/icons/images/icons/checked.png)
-}
-
-QComboBox
-{
-border: 1px solid rgb(30, 78, 162);
-background-color: white;
-color: black;
-}
-
-QComboBox::drop-down
-{
-border: 0px;
-}
-
-QComboBox::down-arrow
-{
-image: url(:/icons/images/icons/down-arrow.png);
-width: 16px;
-height: 16px;
-padding-right: 5px;
 }</string>
   </property>
   <property name="modal">
@@ -151,7 +80,7 @@ background-color: rgb(255, 255, 255);
          <string notr="true">color: rgb(12, 65, 157);</string>
         </property>
         <property name="text">
-         <string>Register a new user</string>
+         <string>LABEL_REGISTER_NEW_USER</string>
         </property>
        </widget>
       </item>
@@ -164,14 +93,14 @@ background-color: rgb(255, 255, 255);
          </size>
         </property>
         <property name="placeholderText">
-         <string>User name</string>
+         <string>LABEL_USER_NAME</string>
         </property>
        </widget>
       </item>
       <item>
        <widget class="QCheckBox" name="checkbox_is_admin">
         <property name="text">
-         <string>User is administrator</string>
+         <string>CHECK_USER_IS_ADMIN</string>
         </property>
        </widget>
       </item>
@@ -198,7 +127,7 @@ background-color: rgb(255, 255, 255);
             </font>
            </property>
            <property name="text">
-            <string>Transmit the following information to the user:</string>
+            <string>LABEL_REGISTER_USER_INSTRUCTIONS</string>
            </property>
            <property name="scaledContents">
             <bool>false</bool>
@@ -224,7 +153,7 @@ background-color: rgb(255, 255, 255);
               </font>
              </property>
              <property name="text">
-              <string>URL</string>
+              <string>LABEL_URL</string>
              </property>
             </widget>
            </item>
@@ -249,7 +178,7 @@ background-color: rgb(255, 255, 255);
               </font>
              </property>
              <property name="text">
-              <string>User name</string>
+              <string>LABEL_USER_NAME</string>
              </property>
             </widget>
            </item>
@@ -261,7 +190,7 @@ background-color: rgb(255, 255, 255);
               </font>
              </property>
              <property name="text">
-              <string>Token</string>
+              <string>LABEL_TOKEN</string>
              </property>
             </widget>
            </item>
@@ -293,8 +222,11 @@ background-color: rgb(255, 255, 255);
            </item>
            <item row="0" column="2">
             <widget class="QToolButton" name="button_copy_username">
+             <property name="toolTip">
+              <string>BUTTON_COPY_TO_CLIPBOARD</string>
+             </property>
              <property name="text">
-              <string>...</string>
+              <string/>
              </property>
              <property name="icon">
               <iconset resource="../rc/resources.qrc">
@@ -313,8 +245,11 @@ background-color: rgb(255, 255, 255);
            </item>
            <item row="1" column="2">
             <widget class="QToolButton" name="button_copy_token">
+             <property name="toolTip">
+              <string>BUTTON_COPY_TO_CLIPBOARD</string>
+             </property>
              <property name="text">
-              <string>...</string>
+              <string/>
              </property>
              <property name="icon">
               <iconset resource="../rc/resources.qrc">
@@ -333,8 +268,11 @@ background-color: rgb(255, 255, 255);
            </item>
            <item row="2" column="2">
             <widget class="QToolButton" name="button_copy_url">
+             <property name="toolTip">
+              <string>BUTTON_COPY_TO_CLIPBOARD</string>
+             </property>
              <property name="text">
-              <string>...</string>
+              <string/>
              </property>
              <property name="icon">
               <iconset resource="../rc/resources.qrc">
@@ -388,7 +326,7 @@ background-color: rgb(255, 255, 255);
          </spacer>
         </item>
         <item>
-         <widget class="QPushButton" name="button_cancel">
+         <widget class="ShadowedButton" name="button_cancel">
           <property name="minimumSize">
            <size>
             <width>0</width>
@@ -401,12 +339,12 @@ background-color: rgb(255, 255, 255);
            </font>
           </property>
           <property name="text">
-           <string>Cancel</string>
+           <string>BUTTON_CANCEL</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="button_register">
+         <widget class="ShadowedButton" name="button_register">
           <property name="minimumSize">
            <size>
             <width>0</width>
@@ -419,7 +357,7 @@ background-color: rgb(255, 255, 255);
            </font>
           </property>
           <property name="text">
-           <string>Register the user</string>
+           <string>BUTTON_REGISTER_USER</string>
           </property>
          </widget>
         </item>
@@ -454,7 +392,7 @@ background-color: rgb(255, 255, 255);
          </spacer>
         </item>
         <item>
-         <widget class="QPushButton" name="button_close">
+         <widget class="ShadowedButton" name="button_close">
           <property name="minimumSize">
            <size>
             <width>0</width>
@@ -470,11 +408,7 @@ background-color: rgb(255, 255, 255);
            <enum>Qt::RightToLeft</enum>
           </property>
           <property name="text">
-           <string>Close</string>
-          </property>
-          <property name="icon">
-           <iconset resource="../rc/resources.qrc">
-            <normaloff>:/icons/images/icons/cancel_white.png</normaloff>:/icons/images/icons/cancel_white.png</iconset>
+           <string>BUTTON_CLOSE</string>
           </property>
           <property name="iconSize">
            <size>
@@ -491,6 +425,13 @@ background-color: rgb(255, 255, 255);
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ShadowedButton</class>
+   <extends>QPushButton</extends>
+   <header>parsec.core.gui.custom_widgets</header>
+  </customwidget>
+ </customwidgets>
  <resources>
   <include location="../rc/resources.qrc"/>
  </resources>
