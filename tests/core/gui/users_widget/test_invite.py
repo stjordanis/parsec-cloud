@@ -44,6 +44,8 @@ async def test_invite_user(
 
         await aqtbot.wait_until(_new_invitation_displayed)
 
+        autoclose_dialog.reset()
+
         monkeypatch.setattr(
             "parsec.core.gui.users_widget.get_text_input",
             lambda *args, **kwargs: bob.human_handle.email,
