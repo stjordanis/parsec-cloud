@@ -7,7 +7,7 @@ from typing import List, Tuple, Dict, Optional
 from collections import defaultdict
 
 from parsec.backend.backend_events import BackendEvent
-from parsec.api.protocol import DeviceID, OrganizationID
+from parsec.api.protocol import UserID, DeviceID, OrganizationID
 from parsec.api.protocol import RealmRole
 from parsec.backend.realm import BaseRealmComponent, RealmNotFoundError
 from parsec.backend.vlob import (
@@ -99,11 +99,34 @@ class MemoryVlobComponent(BaseVlobComponent):
     def __init__(self, send_event):
         self._send_event = send_event
         self._realm_component = None
-        self._vlobs = {}
+        self._vlobs: Dict[OrganizationID, UUID] = {}
         self._per_realm_changes = defaultdict(Changes)
 
     def register_components(self, realm: BaseRealmComponent, **other_components):
         self._realm_component = realm
+
+    def stats(
+        self,
+        organization_id: OrganizationID,
+        user_id: UserID = None,
+        device_id: DeviceID = None,
+        realm_id: UUID = None,
+    ) -> Dict:
+        vlob_count = 0
+        vlob_size = 0
+        for (org_id, _), vlob in self._vlobs.items():
+            if org_id != organization_id:
+                continue
+            for data, author, _ in vlob.data:
+                if user_id is not None and author.user_id != user_id:
+                    continue
+                if device_id is not None and author != device_id:
+                    continue
+                if realm_id is not None and vlob.realm_id != realm_id:
+                    continue
+                vlob_count += 1
+                vlob_size += len(data)
+        return {"vlob_size": vlob_size, "vlob_count": vlob_count}
 
     def _maintenance_reencryption_start_hook(self, organization_id, realm_id, encryption_revision):
         changes = self._per_realm_changes[(organization_id, realm_id)]

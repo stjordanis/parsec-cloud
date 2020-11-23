@@ -22,6 +22,7 @@ from parsec.api.protocol import (
 )
 from parsec.api.data import UserCertificateContent, DeviceCertificateContent, DataError, UserProfile
 from parsec.backend.user import User, Device
+from parsec.backend.stats import BaseStatsComponent
 from parsec.backend.webhooks import WebhooksComponent
 from parsec.backend.utils import catch_protocol_errors, api
 
@@ -72,17 +73,14 @@ class Organization:
         return attr.evolve(self, **kwargs)
 
 
-@attr.s(slots=True, frozen=True, auto_attribs=True)
-class OrganizationStats:
-    data_size: int
-    metadata_size: int
-    users: int
-
-
 class BaseOrganizationComponent:
     def __init__(self, webhooks: WebhooksComponent, bootstrap_token_size: int = 32):
+        self._stats_component: BaseStatsComponent  # Defined in `register_components`
         self.webhooks = webhooks
         self.bootstrap_token_size = bootstrap_token_size
+
+    def register_components(self, stats: BaseStatsComponent, **other_components):
+        self._stats_component = stats
 
     @api("organization_create", handshake_types=[APIV1_HandshakeType.ADMINISTRATION])
     @catch_protocol_errors
@@ -139,7 +137,7 @@ class BaseOrganizationComponent:
         # Get organization of the user
         organization_id = client_ctx.organization_id
         try:
-            stats = await self.stats(organization_id)
+            stats = await self._stats_component.organization_stats(organization_id)
 
         except OrganizationNotFoundError:
             return {"status": "not_found"}
@@ -147,9 +145,9 @@ class BaseOrganizationComponent:
         return organization_stats_serializer.rep_dump(
             {
                 "status": "ok",
-                "users": stats.users,
-                "data_size": stats.data_size,
-                "metadata_size": stats.metadata_size,
+                "users": stats.user_count,
+                "data_size": stats.block_size,
+                "metadata_size": stats.vlob_size,
             }
         )
 
@@ -159,7 +157,7 @@ class BaseOrganizationComponent:
         msg = apiv1_organization_stats_serializer.req_load(msg)
 
         try:
-            stats = await self.stats(msg["organization_id"])
+            stats = await self._stats_component(msg["organization_id"])
 
         except OrganizationNotFoundError:
             return {"status": "not_found"}
@@ -351,13 +349,6 @@ class BaseOrganizationComponent:
             OrganizationAlreadyBootstrappedError
             OrganizationInvalidBootstrapTokenError
             OrganizationFirstUserCreationError
-        """
-        raise NotImplementedError()
-
-    async def stats(self, id: OrganizationID) -> OrganizationStats:
-        """
-        Raises:
-            OrganizationNotFoundError
         """
         raise NotImplementedError()
 

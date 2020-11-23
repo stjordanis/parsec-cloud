@@ -1,5 +1,7 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
+# TODO: move to core tests !
+
 import pytest
 from uuid import uuid4
 from unittest.mock import ANY

@@ -6,7 +6,7 @@ from pendulum import DateTime
 
 from parsec.api.protocol import OrganizationID
 from parsec.crypto import VerifyKey
-from parsec.backend.user import BaseUserComponent, UserError, User, Device
+from parsec.backend.user import UserError, User, Device
 from parsec.backend.organization import (
     BaseOrganizationComponent,
     Organization,
@@ -17,27 +17,27 @@ from parsec.backend.organization import (
     OrganizationNotFoundError,
     OrganizationFirstUserCreationError,
 )
-from parsec.backend.memory.vlob import MemoryVlobComponent
-from parsec.backend.memory.block import MemoryBlockComponent
+from parsec.backend import memory
 from parsec.backend.events import BackendEvent
 
 
 class MemoryOrganizationComponent(BaseOrganizationComponent):
     def __init__(self, send_event, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._user_component = None
-        self._vlob_component = None
-        self._block_component = None
+        self._user_component: "memory.MemoryUserComponent"  # Defined in `register_components`
+        self._vlob_component: "memory.MemoryVlobComponent"  # Defined in `register_components`
+        self._block_component: "memory.MemoryBlockComponent"  # Defined in `register_components`
         self._organizations = {}
         self._send_event = send_event
 
     def register_components(
         self,
-        user: BaseUserComponent,
-        vlob: MemoryVlobComponent,
-        block: MemoryBlockComponent,
+        user: "memory.MemoryUserComponent",
+        vlob: "memory.MemoryVlobComponent",
+        block: "memory.MemoryBlockComponent",
         **other_components
     ):
+        super().register_components(user=user, vlob=vlob, block=block, **other_components)
         self._user_component = user
         self._vlob_component = vlob
         self._block_component = block

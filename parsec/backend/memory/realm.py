@@ -28,8 +28,7 @@ from parsec.backend.realm import (
 )
 from parsec.backend.user import BaseUserComponent, UserNotFoundError
 from parsec.backend.message import BaseMessageComponent
-from parsec.backend.memory.vlob import MemoryVlobComponent
-from parsec.backend.memory.block import MemoryBlockComponent
+from parsec.backend import memory
 
 
 @attr.s
@@ -63,8 +62,8 @@ class MemoryRealmComponent(BaseRealmComponent):
         self,
         user: BaseUserComponent,
         message: BaseMessageComponent,
-        vlob: MemoryVlobComponent,
-        block: MemoryBlockComponent,
+        vlob: "memory.MemoryVlobComponent",
+        block: "memory.MemoryBlockComponent",
         **other_components,
     ):
         self._user_component = user

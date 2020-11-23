@@ -1,12 +1,12 @@
 # Parsec Cloud (https://parsec.cloud) Copyright (c) AGPLv3 2019 Scille SAS
 
-from parsec.backend.backend_events import BackendEvent
 import attr
 import pendulum
 from typing import Tuple, List, Dict, Optional
 from collections import defaultdict
 
 from parsec.api.protocol import OrganizationID, UserID, DeviceID, DeviceName, HumanHandle
+from parsec.backend.backend_events import BackendEvent
 from parsec.backend.user import (
     BaseUserComponent,
     User,
@@ -38,6 +38,16 @@ class MemoryUserComponent(BaseUserComponent):
 
     def register_components(self, **other_components):
         pass
+
+    def stats(self, organization_id: OrganizationID, user_id: UserID = None) -> Dict:
+        org = self._organizations[organization_id]
+        if user_id is not None:
+            return {"device_count": len(org.devices[user_id])}
+        else:
+            return {
+                "user_count": len(org.users),
+                "device_count": sum([len(d) for d in org.devices.values()]),
+            }
 
     async def create_user(
         self, organization_id: OrganizationID, user: User, first_device: Device
