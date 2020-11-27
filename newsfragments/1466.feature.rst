@@ -1,1 +1,1 @@
-Backend can now force https redirection.
+Backend can now force https redirection (see `--ssl-redirect-proxy` parameter).
